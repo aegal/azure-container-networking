@@ -67,7 +67,14 @@ func (nm *networkManager) newNetworkImpl(nwInfo *NetworkInfo, extIf *externalInt
 		}
 		handleCommonOptions(extIf.BridgeName, nwInfo)
 	case opModeTransparent:
+		log.Printf("Transparent mode")
 		handleCommonOptions(extIf.Name, nwInfo)
+		if nwInfo.IPV6Mode != "" {
+			if err := nm.handleIpv6Transparent(extIf, nwInfo); err != nil {
+				log.Errorf("Error configuring ipv6 rules:%+v", err)
+				return nil, err
+			}
+		}
 	default:
 		return nil, errNetworkModeInvalid
 	}
@@ -336,6 +343,40 @@ func applyDnsConfig(extIf *externalInterface, ifName string) error {
 	return err
 }
 
+func (nm *networkManager) handleIpv6Transparent(extIf *externalInterface, nwInfo *NetworkInfo) error {
+	log.Printf("configure ipv6 rules")
+
+	if err := epcommon.EnableIPV6Forwarding(); err != nil {
+		return err
+	}
+
+	hostIf, err := net.InterfaceByName(extIf.Name)
+	if err != nil {
+		return err
+	}
+
+	addrs, err := hostIf.Addrs()
+	if err != nil {
+		return err
+	}
+
+	for _, addr := range addrs {
+		ipAddr, ipNet, err := net.ParseCIDR(addr.String())
+		ipNet.IP = ipAddr
+		if err != nil {
+			continue
+		}
+
+		if !ipAddr.IsGlobalUnicast() {
+			continue
+		}
+
+		extIf.IPAddresses = append(extIf.IPAddresses, ipNet)
+	}
+
+	return addIpv6SnatRule(extIf, nwInfo)
+}
+
 // ConnectExternalInterface connects the given host interface to a bridge.
 func (nm *networkManager) connectExternalInterface(extIf *externalInterface, nwInfo *NetworkInfo) error {
 	var (
@@ -586,13 +627,35 @@ func addIpv6NatGateway(nwInfo *NetworkInfo) error {
 
 // snat ipv6 traffic to secondary ipv6 ip before leaving VM
 func addIpv6SnatRule(extIf *externalInterface, nwInfo *NetworkInfo) error {
-	log.Printf("[net] Adding ipv6 snat rule")
+	var (
+		ipv6SnatRuleSet  bool
+		ipv6SubnetPrefix *net.IPNet
+	)
+
+	for _, subnet := range nwInfo.Subnets {
+		if subnet.Family == platform.AfINET6 {
+			ipv6SubnetPrefix = &subnet.Prefix
+			break
+		}
+	}
+
+	if ipv6SubnetPrefix == nil {
+		return fmt.Errorf("Couldn't find ipv6 subnet in network info")
+	}
+
 	for _, ipAddr := range extIf.IPAddresses {
 		if ipAddr.IP.To4() == nil {
-			if err := epcommon.AddSnatRule("", ipAddr.IP); err != nil {
+			log.Printf("[net] Adding ipv6 snat rule")
+			matchSrcPrefix := fmt.Sprintf("-s %s", ipv6SubnetPrefix.String())
+			if err := epcommon.AddSnatRule(matchSrcPrefix, ipAddr.IP); err != nil {
 				return err
 			}
+			ipv6SnatRuleSet = true
 		}
+	}
+
+	if !ipv6SnatRuleSet {
+		return fmt.Errorf("ipv6 snat rule not set. Might be VM ipv6 address missing")
 	}
 
 	return nil

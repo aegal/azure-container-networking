@@ -152,6 +152,7 @@ func (source *ipv6IpamSource) refresh() error {
 	}
 
 	if source.isLoaded {
+		log.Printf("ipv6 source already loaded")
 		return nil
 	}
 
@@ -211,7 +212,9 @@ func (source *ipv6IpamSource) refresh() error {
 		return err
 	}
 
+	source.isLoaded = true
 	log.Printf("[ipam] Address space successfully populated from Kubernetes API Server")
+
 	return err
 }
 
