@@ -640,7 +640,7 @@ func addIpv6SnatRule(extIf *externalInterface, nwInfo *NetworkInfo) error {
 	}
 
 	if ipv6SubnetPrefix == nil {
-		return fmt.Errorf("Couldn't find ipv6 subnet in network info")
+		return errors.New("Couldn't find ipv6 subnet in network info")
 	}
 
 	for _, ipAddr := range extIf.IPAddresses {
@@ -655,7 +655,7 @@ func addIpv6SnatRule(extIf *externalInterface, nwInfo *NetworkInfo) error {
 	}
 
 	if !ipv6SnatRuleSet {
-		return fmt.Errorf("ipv6 snat rule not set. Might be VM ipv6 address missing")
+		return errors.New("ipv6 snat rule not set. Might be VM ipv6 address missing")
 	}
 
 	return nil

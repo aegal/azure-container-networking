@@ -55,7 +55,6 @@ func setArpProxy(ifName string) error {
 }
 
 func (client *TransparentEndpointClient) AddEndpoints(epInfo *EndpointInfo) error {
-
 	if _, err := net.InterfaceByName(client.hostVethName); err == nil {
 		log.Printf("Deleting old host veth %v", client.hostVethName)
 		if err = netlink.DeleteLink(client.hostVethName); err != nil {
@@ -164,7 +163,7 @@ func (client *TransparentEndpointClient) ConfigureContainerInterfacesAndRoutes(e
 		return err
 	}
 
-	//ip route del 10.240.0.0/12 dev eth0 (removing kernel subnet route added by above call)
+	// ip route del 10.240.0.0/12 dev eth0 (removing kernel subnet route added by above call)
 	for _, ipAddr := range epInfo.IPAddresses {
 		_, ipnet, _ := net.ParseCIDR(ipAddr.String())
 		routeInfo := RouteInfo{
@@ -177,8 +176,8 @@ func (client *TransparentEndpointClient) ConfigureContainerInterfacesAndRoutes(e
 		}
 	}
 
-	//add route for virtualgwip
-	//ip route add 169.254.1.1/32 dev eth0
+	// add route for virtualgwip
+	// ip route add 169.254.1.1/32 dev eth0
 	virtualGwIP, virtualGwNet, _ := net.ParseCIDR(virtualGwIPString)
 	routeInfo := RouteInfo{
 		Dst:   *virtualGwNet,
@@ -188,7 +187,7 @@ func (client *TransparentEndpointClient) ConfigureContainerInterfacesAndRoutes(e
 		return err
 	}
 
-	//ip route add default via 169.254.1.1 dev eth0
+	// ip route add default via 169.254.1.1 dev eth0
 	_, defaultIPNet, _ := net.ParseCIDR(defaultGwCidr)
 	dstIP := net.IPNet{IP: net.ParseIP(defaultGw), Mask: defaultIPNet.Mask}
 	routeInfo = RouteInfo{
@@ -199,7 +198,7 @@ func (client *TransparentEndpointClient) ConfigureContainerInterfacesAndRoutes(e
 		return err
 	}
 
-	//arp -s 169.254.1.1 e3:45:f4:ac:34:12 - add static arp entry for virtualgwip to hostveth interface mac
+	// arp -s 169.254.1.1 e3:45:f4:ac:34:12 - add static arp entry for virtualgwip to hostveth interface mac
 	log.Printf("[net] Adding static arp for IP address %v and MAC %v in Container namespace", virtualGwNet.String(), client.hostVethMac)
 	if err := netlink.AddOrRemoveStaticArp(netlink.ADD, client.containerVethName, virtualGwNet.IP, client.hostVethMac, false); err != nil {
 		return err
@@ -210,22 +209,21 @@ func (client *TransparentEndpointClient) ConfigureContainerInterfacesAndRoutes(e
 	}
 
 	return client.setIPV6NeighEntry(epInfo)
-
 }
 
 func (client *TransparentEndpointClient) setupIPV6Routes(epInfo *EndpointInfo) error {
 	if epInfo.IPV6Mode != "" {
 		log.Printf("Setting up ipv6 routes in container")
 
-		//add route for virtualgwip
-		//ip -6 route add fe80::1234:5678:9abc/128 dev eth0
+		// add route for virtualgwip
+		// ip -6 route add fe80::1234:5678:9abc/128 dev eth0
 		virtualGwIP, virtualGwNet, _ := net.ParseCIDR(virtualv6GwString)
 		gwRoute := RouteInfo{
 			Dst:   *virtualGwNet,
 			Scope: netlink.RT_SCOPE_LINK,
 		}
 
-		//ip -6 route add default via fe80::1234:5678:9abc dev eth0
+		// ip -6 route add default via fe80::1234:5678:9abc dev eth0
 		_, defaultIPNet, _ := net.ParseCIDR(defaultv6Cidr)
 		log.Printf("defaultv6ipnet :%+v", defaultIPNet)
 		defaultRoute := RouteInfo{
