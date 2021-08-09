@@ -347,17 +347,17 @@ func (nm *networkManager) handleIpv6Transparent(extIf *externalInterface, nwInfo
 	log.Printf("configure ipv6 rules")
 
 	if err := epcommon.EnableIPV6Forwarding(); err != nil {
-		return err
+		return fmt.Errorf("Ipv6 forwarding failed: %w", err)
 	}
 
 	hostIf, err := net.InterfaceByName(extIf.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w", err)
 	}
 
 	addrs, err := hostIf.Addrs()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w", err)
 	}
 
 	for _, addr := range addrs {
@@ -629,18 +629,18 @@ func addIpv6NatGateway(nwInfo *NetworkInfo) error {
 func addIpv6SnatRule(extIf *externalInterface, nwInfo *NetworkInfo) error {
 	var (
 		ipv6SnatRuleSet  bool
-		ipv6SubnetPrefix *net.IPNet
+		ipv6SubnetPrefix net.IPNet
 	)
 
 	for _, subnet := range nwInfo.Subnets {
 		if subnet.Family == platform.AfINET6 {
-			ipv6SubnetPrefix = &subnet.Prefix
+			ipv6SubnetPrefix = subnet.Prefix
 			break
 		}
 	}
 
-	if ipv6SubnetPrefix == nil {
-		return errors.New("Couldn't find ipv6 subnet in network info")
+	if len(ipv6SubnetPrefix.IP) == 0 {
+		return errSubnetV6NotFound
 	}
 
 	for _, ipAddr := range extIf.IPAddresses {
@@ -648,14 +648,14 @@ func addIpv6SnatRule(extIf *externalInterface, nwInfo *NetworkInfo) error {
 			log.Printf("[net] Adding ipv6 snat rule")
 			matchSrcPrefix := fmt.Sprintf("-s %s", ipv6SubnetPrefix.String())
 			if err := epcommon.AddSnatRule(matchSrcPrefix, ipAddr.IP); err != nil {
-				return err
+				return fmt.Errorf("Adding iptable snat rule failed:%w", err)
 			}
 			ipv6SnatRuleSet = true
 		}
 	}
 
 	if !ipv6SnatRuleSet {
-		return errors.New("ipv6 snat rule not set. Might be VM ipv6 address missing")
+		return errV6SnatRuleNotSet
 	}
 
 	return nil
