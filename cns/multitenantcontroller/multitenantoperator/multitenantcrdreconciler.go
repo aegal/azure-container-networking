@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"reflect"
 	"strings"
 
 	"github.com/Azure/azure-container-networking/cns"
@@ -107,6 +108,13 @@ func (r *multiTenantCrdReconciler) Reconcile(ctx context.Context, request reconc
 		return ctrl.Result{}, err
 	}
 
+	// Check that the MultiTenantInfo is set
+	if reflect.DeepEqual(ncapi.MultiTenantInfo{}, nc.Status.MultiTenantInfo) {
+		logger.Errorf("expected NC status multitenant info to not be empty for object %s", request.NamespacedName)
+		// There is no reason to requeue since we will reconcile this object when the multitenant info is added
+		return ctrl.Result{}, nil
+	}
+
 	// Persist NC states into CNS.
 	_, ipNet, err := net.ParseCIDR(nc.Status.IPSubnet)
 	if err != nil {
@@ -127,6 +135,10 @@ func (r *multiTenantCrdReconciler) Reconcile(ctx context.Context, request reconc
 			GatewayIPAddress: nc.Status.Gateway,
 		},
 		PrimaryInterfaceIdentifier: nc.Status.PrimaryInterfaceIdentifier,
+		MultiTenancyInfo: cns.MultiTenancyInfo{
+			EncapType: nc.Status.MultiTenantInfo.EncapType,
+			ID:        int(nc.Status.MultiTenantInfo.ID),
+		},
 	}
 	logger.Printf("CreateOrUpdateNC with networkContainerRequest: %#v", networkContainerRequest)
 	if err = r.CNSClient.CreateOrUpdateNC(networkContainerRequest); err != nil {
