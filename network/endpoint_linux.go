@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azure/azure-container-networking/log"
 	"github.com/Azure/azure-container-networking/netlink"
+	"github.com/Azure/azure-container-networking/network/epcommon"
 )
 
 const (
@@ -175,6 +176,14 @@ func (nw *network) newEndpointImpl(epInfo *EndpointInfo) (*endpoint, error) {
 				log.Printf("[net] Failed to exit netns, err:%v.", err)
 			}
 		}()
+	}
+
+	if epInfo.IPV6Mode != "" {
+		// Enable ipv6 setting in container
+		log.Printf("Enable ipv6 setting in container.")
+		if err := epcommon.UpdateIPV6Setting(0); err != nil {
+			return nil, err
+		}
 	}
 
 	// If a name for the container interface is specified...

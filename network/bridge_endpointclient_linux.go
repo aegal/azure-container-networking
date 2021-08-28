@@ -170,13 +170,6 @@ func (client *LinuxBridgeEndpointClient) SetupContainerInterfaces(epInfo *Endpoi
 }
 
 func (client *LinuxBridgeEndpointClient) ConfigureContainerInterfacesAndRoutes(epInfo *EndpointInfo) error {
-	if epInfo.IPV6Mode != "" {
-		// Enable ipv6 setting in container
-		if err := epcommon.UpdateIPV6Setting(0); err != nil {
-			return err
-		}
-	}
-
 	if err := epcommon.AssignIPToInterface(client.containerVethName, epInfo.IPAddresses); err != nil {
 		return err
 	}
