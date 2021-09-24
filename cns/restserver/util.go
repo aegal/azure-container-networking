@@ -40,8 +40,6 @@ func (service *HTTPRestService) setNetworkInfo(networkName string, networkInfo *
 	service.Lock()
 	defer service.Unlock()
 	service.state.Networks[networkName] = networkInfo
-
-	return
 }
 
 // Remove the network info from the service network state
@@ -49,8 +47,6 @@ func (service *HTTPRestService) removeNetworkInfo(networkName string) {
 	service.Lock()
 	defer service.Unlock()
 	delete(service.state.Networks, networkName)
-
-	return
 }
 
 // saveState writes CNS state to persistent store.
@@ -100,7 +96,6 @@ func (service *HTTPRestService) restoreState() {
 	}
 
 	logger.Printf("[Azure CNS]  Restored state, %+v\n", service.state)
-	return
 }
 
 func (service *HTTPRestService) saveNetworkContainerGoalState(
@@ -112,7 +107,7 @@ func (service *HTTPRestService) saveNetworkContainerGoalState(
 
 	var (
 		hostVersion                string
-		existingSecondaryIPConfigs map[string]cns.SecondaryIPConfig //uuid is key
+		existingSecondaryIPConfigs map[string]cns.SecondaryIPConfig // uuid is key
 		vfpUpdateComplete          bool
 	)
 
@@ -142,7 +137,8 @@ func (service *HTTPRestService) saveNetworkContainerGoalState(
 			VMVersion:                     req.Version,
 			CreateNetworkContainerRequest: createNetworkContainerRequest,
 			HostVersion:                   hostVersion,
-			VfpUpdateComplete:             vfpUpdateComplete}
+			VfpUpdateComplete:             vfpUpdateComplete,
+		}
 
 	switch req.NetworkContainerType {
 	case cns.AzureContainerInstance:
@@ -213,7 +209,7 @@ func (service *HTTPRestService) updateIPConfigsStateUntransacted(
 ) (types.ResponseCode, string) {
 	// parse the existingSecondaryIpConfigState to find the deleted Ips
 	newIPConfigs := req.SecondaryIPConfigs
-	var tobeDeletedIpConfigs = make(map[string]cns.SecondaryIPConfig)
+	tobeDeletedIPConfigs := make(map[string]cns.SecondaryIPConfig)
 
 	// Populate the ToBeDeleted list, Secondary IPs which doesnt exist in New request anymore.
 	// We will later remove them from the in-memory cache
@@ -221,13 +217,13 @@ func (service *HTTPRestService) updateIPConfigsStateUntransacted(
 		_, exists := newIPConfigs[secondaryIpId]
 		if !exists {
 			// IP got removed in the updated request, add it in tobeDeletedIps
-			tobeDeletedIpConfigs[secondaryIpId] = existingIPConfig
+			tobeDeletedIPConfigs[secondaryIpId] = existingIPConfig
 		}
 	}
 
 	// Validate TobeDeletedIps are ready to be deleted.
-	for ipId, _ := range tobeDeletedIpConfigs {
-		ipConfigStatus, exists := service.PodIPConfigState[ipId]
+	for ipID := range tobeDeletedIPConfigs {
+		ipConfigStatus, exists := service.PodIPConfigState[ipID]
 		if exists {
 			// pod ip exists, validate if state is not allocated, else fail
 			if ipConfigStatus.State == cns.Allocated {
@@ -238,8 +234,8 @@ func (service *HTTPRestService) updateIPConfigsStateUntransacted(
 	}
 
 	// now actually remove the deletedIPs
-	for ipId, _ := range tobeDeletedIpConfigs {
-		returncode, errMsg := service.removeToBeDeletedIPStateUntransacted(ipId, true)
+	for ipID := range tobeDeletedIPConfigs {
+		returncode, errMsg := service.removeToBeDeletedIPStateUntransacted(ipID, true)
 		if returncode != types.Success {
 			return returncode, errMsg
 		}
@@ -252,7 +248,8 @@ func (service *HTTPRestService) updateIPConfigsStateUntransacted(
 	if hostNCVersionInInt, err = strconv.Atoi(hostVersion); err != nil {
 		return types.UnsupportedNCVersion, fmt.Sprintf("Invalid hostVersion is %s, err:%s", hostVersion, err)
 	}
-	service.addIPConfigStateUntransacted(req.NetworkContainerid, hostNCVersionInInt, req.SecondaryIPConfigs, existingSecondaryIPConfigs)
+	service.addIPConfigStateUntransacted(req.NetworkContainerid, hostNCVersionInInt, req.SecondaryIPConfigs,
+		existingSecondaryIPConfigs)
 
 	return 0, ""
 }
@@ -260,22 +257,28 @@ func (service *HTTPRestService) updateIPConfigsStateUntransacted(
 // addIPConfigStateUntransacted adds the IPConfigs to the PodIpConfigState map with Available state
 // If the IP is already added then it will be an idempotent call. Also note, caller will
 // acquire/release the service lock.
-func (service *HTTPRestService) addIPConfigStateUntransacted(ncId string, hostVersion int, ipconfigs, existingSecondaryIPConfigs map[string]cns.SecondaryIPConfig) {
+func (service *HTTPRestService) addIPConfigStateUntransacted(ncID string, hostVersion int, ipconfigs,
+	existingSecondaryIPConfigs map[string]cns.SecondaryIPConfig) {
 	// add ipconfigs to state
-	for ipId, ipconfig := range ipconfigs {
-		// New secondary IP configs has new NC version however, CNS don't want to override existing IPs'with new NC version
-		// Set it back to previous NC version if IP already exist.
-		if existingIPConfig, existsInPreviousIPConfig := existingSecondaryIPConfigs[ipId]; existsInPreviousIPConfig {
+	for ipID, ipconfig := range ipconfigs {
+		// New secondary IP configs has new NC version however, CNS don't want to override existing IPs'with new
+		// NC version. Set it back to previous NC version if IP already exist.
+		if existingIPConfig, existsInPreviousIPConfig := existingSecondaryIPConfigs[ipID]; existsInPreviousIPConfig {
 			ipconfig.NCVersion = existingIPConfig.NCVersion
-			ipconfigs[ipId] = ipconfig
+			ipconfigs[ipID] = ipconfig
 		}
-		logger.Printf("[Azure-Cns] Set IP %s version to %d, programmed host nc version is %d", ipconfig.IPAddress, ipconfig.NCVersion, hostVersion)
-		if _, exists := service.PodIPConfigState[ipId]; exists {
+
+		if ipState, exists := service.PodIPConfigState[ipID]; exists {
+			logger.Printf("[Azure-Cns] Set ipId %s, IP %s version to %d, programmed host nc version is %d, "+
+				"ipState: %+v", ipID, ipconfig.IPAddress, ipconfig.NCVersion, hostVersion, ipState)
 			continue
 		}
+
+		logger.Printf("[Azure-Cns] Set ipId %s, IP %s version to %d, programmed host nc version is %d",
+			ipID, ipconfig.IPAddress, ipconfig.NCVersion, hostVersion)
 		// Using the updated NC version attached with IP to compare with latest nmagent version and determine IP statues.
 		// When reconcile, service.PodIPConfigState doens't exist, rebuild it with the help of NC version attached with IP.
-		var newIPCNSStatus string
+		var newIPCNSStatus cns.IPConfigState
 		if hostVersion < ipconfig.NCVersion {
 			newIPCNSStatus = cns.PendingProgramming
 		} else {
@@ -283,15 +286,15 @@ func (service *HTTPRestService) addIPConfigStateUntransacted(ncId string, hostVe
 		}
 		// add the new State
 		ipconfigStatus := cns.IPConfigurationStatus{
-			NCID:      ncId,
-			ID:        ipId,
+			NCID:      ncID,
+			ID:        ipID,
 			IPAddress: ipconfig.IPAddress,
 			State:     newIPCNSStatus,
 			PodInfo:   nil,
 		}
 		logger.Printf("[Azure-Cns] Add IP %s as %s", ipconfig.IPAddress, newIPCNSStatus)
 
-		service.PodIPConfigState[ipId] = ipconfigStatus
+		service.PodIPConfigState[ipID] = ipconfigStatus
 
 		// Todo Update batch API and maintain the count
 	}
@@ -380,13 +383,13 @@ func (service *HTTPRestService) getNetworkContainerResponse(
 			}
 
 			vfpUpdateComplete := !waitingForUpdate
-			ncstatus, _ := service.state.ContainerStatus[containerID]
+			ncstatus := service.state.ContainerStatus[containerID]
 			// Update the container status if-
 			// 1. VfpUpdateCompleted successfully
 			// 2. VfpUpdateComplete changed to false
 			if (getNetworkContainerResponse.Response.ReturnCode == types.NetworkContainerVfpProgramComplete &&
-				vfpUpdateComplete == true && ncstatus.VfpUpdateComplete != vfpUpdateComplete) ||
-				(vfpUpdateComplete == false && ncstatus.VfpUpdateComplete != vfpUpdateComplete) {
+				vfpUpdateComplete && ncstatus.VfpUpdateComplete != vfpUpdateComplete) ||
+				(!vfpUpdateComplete && ncstatus.VfpUpdateComplete != vfpUpdateComplete) {
 				logger.Printf("[Azure-CNS] Setting VfpUpdateComplete to %t for NC: %s", vfpUpdateComplete, containerID)
 				ncstatus.VfpUpdateComplete = vfpUpdateComplete
 				service.state.ContainerStatus[containerID] = ncstatus
@@ -412,7 +415,6 @@ func (service *HTTPRestService) getNetworkContainerResponse(
 		}
 
 		logger.Printf("containerid %v", containerID)
-		break
 
 	default:
 		getNetworkContainerResponse.Response.ReturnCode = types.UnsupportedOrchestratorType
@@ -495,17 +497,20 @@ func (service *HTTPRestService) attachOrDetachHelper(req cns.ConfigureContainerN
 	if method != "POST" {
 		return cns.Response{
 			ReturnCode: types.InvalidParameter,
-			Message:    "[Azure CNS] Error. " + operation + "ContainerToNetwork did not receive a POST."}
+			Message:    "[Azure CNS] Error. " + operation + "ContainerToNetwork did not receive a POST.",
+		}
 	}
 	if req.Containerid == "" {
 		return cns.Response{
 			ReturnCode: types.DockerContainerNotSpecified,
-			Message:    "[Azure CNS] Error. Containerid is empty"}
+			Message:    "[Azure CNS] Error. Containerid is empty",
+		}
 	}
 	if req.NetworkContainerid == "" {
 		return cns.Response{
 			ReturnCode: types.NetworkContainerNotSpecified,
-			Message:    "[Azure CNS] Error. NetworkContainerid is empty"}
+			Message:    "[Azure CNS] Error. NetworkContainerid is empty",
+		}
 	}
 
 	existing, ok := service.getNetworkContainerDetails(cns.SwiftPrefix + req.NetworkContainerid)
@@ -516,7 +521,8 @@ func (service *HTTPRestService) attachOrDetachHelper(req cns.ConfigureContainerN
 				if returnCode == types.NetworkContainerVfpProgramPending {
 					return cns.Response{
 						ReturnCode: returnCode,
-						Message:    message}
+						Message:    message,
+					}
 				}
 			}
 		} else {
@@ -530,7 +536,8 @@ func (service *HTTPRestService) attachOrDetachHelper(req cns.ConfigureContainerN
 			if returnCode != types.Success {
 				return cns.Response{
 					ReturnCode: returnCode,
-					Message:    msg}
+					Message:    msg,
+				}
 			}
 
 			existing, _ = service.getNetworkContainerDetails(cns.SwiftPrefix + req.NetworkContainerid)
@@ -538,7 +545,8 @@ func (service *HTTPRestService) attachOrDetachHelper(req cns.ConfigureContainerN
 	} else if !ok {
 		return cns.Response{
 			ReturnCode: types.NotFound,
-			Message:    fmt.Sprintf("[Azure CNS] Error. Network Container %s does not exist.", req.NetworkContainerid)}
+			Message:    fmt.Sprintf("[Azure CNS] Error. Network Container %s does not exist.", req.NetworkContainerid),
+		}
 	}
 
 	var returnCode types.ResponseCode
@@ -571,7 +579,8 @@ func (service *HTTPRestService) attachOrDetachHelper(req cns.ConfigureContainerN
 
 	return cns.Response{
 		ReturnCode: returnCode,
-		Message:    returnMessage}
+		Message:    returnMessage,
+	}
 }
 
 func (service *HTTPRestService) getNetPluginDetails() *networkcontainers.NetPluginConfiguration {
@@ -628,7 +637,7 @@ func (service *HTTPRestService) joinNetwork(
 }
 
 func logNCSnapshot(createNetworkContainerRequest cns.CreateNetworkContainerRequest) {
-	var aiEvent = aitelemetry.Event{
+	aiEvent := aitelemetry.Event{
 		EventName:  logger.CnsNCSnapshotEventStr,
 		Properties: make(map[string]string),
 		ResourceID: createNetworkContainerRequest.NetworkContainerid,
@@ -651,7 +660,6 @@ func logNCSnapshot(createNetworkContainerRequest cns.CreateNetworkContainerReque
 
 // Sends network container snapshots to App Insights telemetry.
 func (service *HTTPRestService) logNCSnapshots() {
-
 	for _, ncStatus := range service.state.ContainerStatus {
 		logNCSnapshot(ncStatus.CreateNetworkContainerRequest)
 	}
@@ -790,7 +798,7 @@ func (service *HTTPRestService) isNCWaitingForUpdate(
 	} else {
 		returnCode = types.NetworkContainerVfpProgramComplete
 		waitingForUpdate = false
-		message = fmt.Sprintf("Vfp programming complete")
+		message = "Vfp programming complete"
 		logger.Printf("[Azure CNS] Vfp programming complete for NC: %s with version: %d", ncid, ncTargetVersion)
 	}
 	return

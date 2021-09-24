@@ -42,7 +42,6 @@ type AIConfig struct {
 
 // TelmetryHandle holds appinsight handles and metadata
 type telemetryHandle struct {
-	telemetryConfig              *appinsights.TelemetryConfiguration
 	appName                      string
 	appVersion                   string
 	metadata                     common.Metadata
@@ -66,4 +65,6 @@ type TelemetryHandle interface {
 	TrackEvent(aiEvent Event)
 	// Close - should be called for each NewAITelemetry call. Will release resources acquired
 	Close(timeout int)
+	// Flush - forces the current queue to be sent
+	Flush()
 }

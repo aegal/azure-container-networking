@@ -2,22 +2,20 @@ package kubecontroller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sync"
 
 	"github.com/Azure/azure-container-networking/cns"
 	"github.com/Azure/azure-container-networking/cns/cnireconciler"
-	"github.com/Azure/azure-container-networking/cns/cnsclient"
-	"github.com/Azure/azure-container-networking/cns/cnsclient/httpapi"
 	"github.com/Azure/azure-container-networking/cns/logger"
 	"github.com/Azure/azure-container-networking/cns/restserver"
 	"github.com/Azure/azure-container-networking/cns/singletenantcontroller"
-	nnc "github.com/Azure/azure-container-networking/nodenetworkconfig/api/v1alpha"
+	"github.com/Azure/azure-container-networking/cns/types"
+	"github.com/Azure/azure-container-networking/crd"
+	"github.com/Azure/azure-container-networking/crd/nodenetworkconfig/api/v1alpha"
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -27,34 +25,39 @@ import (
 )
 
 const (
-	nodeNameEnvVar    = "NODENAME"
-	k8sNamespace      = "kube-system"
-	crdTypeName       = "nodenetworkconfigs"
-	allNamespaces     = ""
-	prometheusAddress = "0" //0 means disabled
+	nodeNameEnvVar = "NODENAME"
+	k8sNamespace   = "kube-system"
+	crdTypeName    = "nodenetworkconfigs"
+	allNamespaces  = ""
 )
 
 // Config has crdRequestController options
 type Config struct {
 	// InitializeFromCNI whether or not to initialize CNS state from k8s/CRDs
-	InitializeFromCNI bool
-	KubeConfig        *rest.Config
-	Service           *restserver.HTTPRestService
+	InitializeFromCNI  bool
+	KubeConfig         *rest.Config
+	MetricsBindAddress string
+	Service            *restserver.HTTPRestService
 }
 
 var _ singletenantcontroller.RequestController = (*requestController)(nil)
+
+type cnsrestservice interface {
+	ReconcileNCState(*cns.CreateNetworkContainerRequest, map[string]cns.PodInfo, v1alpha.Scaler, v1alpha.NodeNetworkConfigSpec) types.ResponseCode
+	CreateOrUpdateNetworkContainerInternal(*cns.CreateNetworkContainerRequest) types.ResponseCode
+}
 
 // requestController
 // - watches CRD status changes
 // - updates CRD spec
 type requestController struct {
 	cfg             Config
-	mgr             manager.Manager //Manager starts the reconcile loop which watches for crd status changes
-	KubeClient      KubeClient      //KubeClient is a cached client which interacts with API server
-	directAPIClient DirectAPIClient //Direct client to interact with API server
-	directCRDClient DirectCRDClient //Direct client to interact with CRDs on API server
-	CNSClient       cnsclient.APIClient
-	nodeName        string //name of node running this program
+	mgr             manager.Manager // Manager starts the reconcile loop which watches for crd status changes
+	KubeClient      KubeClient      // KubeClient is a cached client which interacts with API server
+	directAPIClient DirectAPIClient // Direct client to interact with API server
+	directCRDClient DirectCRDClient // Direct client to interact with CRDs on API server
+	CNSRestService  cnsrestservice
+	nodeName        string // name of node running this program
 	Reconciler      *CrdReconciler
 	initialized     bool
 	Started         bool
@@ -74,10 +77,9 @@ func GetKubeConfig() (*rest.Config, error) {
 	return k8sconfig, nil
 }
 
-//NewCrdRequestController given a reference to CNS's HTTPRestService state, returns a crdRequestController struct
+// New builds a requestController struct given a reference to CNS's HTTPRestService state.
 func New(cfg Config) (*requestController, error) {
-
-	//Check that logger package has been intialized
+	// Check that logger package has been intialized
 	if logger.Log == nil {
 		return nil, errors.New("Must initialize logger before calling")
 	}
@@ -88,14 +90,14 @@ func New(cfg Config) (*requestController, error) {
 		return nil, errors.New("Must declare " + nodeNameEnvVar + " environment variable.")
 	}
 
-	//Add client-go scheme to runtime sheme so manager can recognize it
-	var scheme = runtime.NewScheme()
+	// Add client-go scheme to runtime sheme so manager can recognize it
+	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		return nil, errors.New("Error adding client-go scheme to runtime scheme")
 	}
 
-	//Add CRD scheme to runtime sheme so manager can recognize it
-	if err := nnc.AddToScheme(scheme); err != nil {
+	// Add CRD scheme to runtime sheme so manager can recognize it
+	if err := v1alpha.AddToScheme(scheme); err != nil {
 		return nil, errors.New("Error adding NodeNetworkConfig scheme to runtime scheme")
 	}
 
@@ -106,7 +108,7 @@ func New(cfg Config) (*requestController, error) {
 	}
 
 	// Create a direct client to the API server configured to get nodenetconfigs to get nnc for same reason above
-	directCRDClient, err := NewCRDDirectClient(cfg.KubeConfig, &nnc.GroupVersion)
+	directCRDClient, err := NewCRDDirectClient(cfg.KubeConfig, &v1alpha.GroupVersion)
 	if err != nil {
 		return nil, fmt.Errorf("Error creating direct CRD client: %v", err)
 	}
@@ -116,7 +118,7 @@ func New(cfg Config) (*requestController, error) {
 	// for serving prometheus metrics, set to "0" to disable
 	mgr, err := ctrl.NewManager(cfg.KubeConfig, ctrl.Options{
 		Scheme:             scheme,
-		MetricsBindAddress: prometheusAddress,
+		MetricsBindAddress: cfg.MetricsBindAddress,
 		Namespace:          k8sNamespace,
 	})
 	if err != nil {
@@ -124,16 +126,11 @@ func New(cfg Config) (*requestController, error) {
 		return nil, err
 	}
 
-	//Create httpClient
-	httpClient := &httpapi.Client{
-		RestService: cfg.Service,
-	}
-
-	//Create reconciler
+	// Create reconciler
 	crdreconciler := &CrdReconciler{
-		KubeClient: mgr.GetClient(),
-		NodeName:   nodeName,
-		CNSClient:  httpClient,
+		KubeClient:     mgr.GetClient(),
+		NodeName:       nodeName,
+		CNSRestService: cfg.Service,
 	}
 
 	// Setup manager with reconciler
@@ -149,7 +146,7 @@ func New(cfg Config) (*requestController, error) {
 		KubeClient:      mgr.GetClient(),
 		directAPIClient: directAPIClient,
 		directCRDClient: directCRDClient,
-		CNSClient:       httpClient,
+		CNSRestService:  cfg.Service,
 		nodeName:        nodeName,
 		Reconciler:      crdreconciler,
 	}
@@ -189,7 +186,7 @@ func (rc *requestController) Start(ctx context.Context) error {
 
 	logger.Printf("Starting reconcile loop")
 	if err := rc.mgr.Start(ctx); err != nil {
-		if rc.isNotDefined(err) {
+		if crd.IsNotDefined(err) {
 			logger.Errorf("[cns-rc] CRD is not defined on cluster, starting reconcile loop failed: %v", err)
 			os.Exit(1)
 		}
@@ -209,23 +206,24 @@ func (rc *requestController) IsStarted() bool {
 
 // InitCNS initializes cns by passing pods and a createnetworkcontainerrequest
 func (rc *requestController) initCNS(ctx context.Context) error {
-	// Get nodeNetConfig using direct client
-	nodeNetConfig, err := rc.getNodeNetConfigDirect(ctx, rc.nodeName, k8sNamespace)
+	// Get nnc using direct client
+	nnc, err := rc.getNodeNetConfigDirect(ctx, rc.nodeName, k8sNamespace)
 	if err != nil {
 		// If the CRD is not defined, exit
-		if rc.isNotDefined(err) {
+		if crd.IsNotDefined(err) {
 			logger.Errorf("CRD is not defined on cluster: %v", err)
 			os.Exit(1)
 		}
 
-		if nodeNetConfig == nil {
+		if nnc == nil {
 			logger.Errorf("NodeNetworkConfig is not present on cluster")
 			return nil
 		}
 
-		// If instance of crd is not found, pass nil to CNSClient
+		// If instance of crd is not found, pass nil to CNSRestService
 		if client.IgnoreNotFound(err) == nil {
-			return rc.CNSClient.ReconcileNCState(nil, nil, nodeNetConfig.Status.Scaler, nodeNetConfig.Spec)
+			//nolint:wrapcheck
+			return restserver.ResponseCodeToError(rc.CNSRestService.ReconcileNCState(nil, nil, nnc.Status.Scaler, nnc.Spec))
 		}
 
 		// If it's any other error, log it and return
@@ -233,13 +231,14 @@ func (rc *requestController) initCNS(ctx context.Context) error {
 		return err
 	}
 
-	// If there are no NCs, pass nil to CNSClient
-	if len(nodeNetConfig.Status.NetworkContainers) == 0 {
-		return rc.CNSClient.ReconcileNCState(nil, nil, nodeNetConfig.Status.Scaler, nodeNetConfig.Spec)
+	// If there are no NCs, pass nil to CNSRestService
+	if len(nnc.Status.NetworkContainers) == 0 {
+		//nolint:wrapcheck
+		return restserver.ResponseCodeToError(rc.CNSRestService.ReconcileNCState(nil, nil, nnc.Status.Scaler, nnc.Spec))
 	}
 
 	// Convert to CreateNetworkContainerRequest
-	ncRequest, err := CRDStatusToNCRequest(nodeNetConfig.Status)
+	ncRequest, err := CRDStatusToNCRequest(nnc.Status)
 	if err != nil {
 		logger.Errorf("Error when converting nodeNetConfig status into CreateNetworkContainerRequest: %v", err)
 		return err
@@ -262,59 +261,70 @@ func (rc *requestController) initCNS(ctx context.Context) error {
 			logger.Errorf("error when getting all pods when initializing cns: %v", err)
 			return err
 		}
-		podInfoByIPProvider = cns.PodInfoByIPProviderFunc(func() map[string]cns.PodInfo {
+		podInfoByIPProvider = cns.PodInfoByIPProviderFunc(func() (map[string]cns.PodInfo, error) {
 			return rc.kubePodsToPodInfoByIP(pods.Items)
 		})
 	}
 
-	// Call cnsclient init cns passing those two things
-	return rc.CNSClient.ReconcileNCState(&ncRequest, podInfoByIPProvider.PodInfoByIP(), nodeNetConfig.Status.Scaler, nodeNetConfig.Spec)
+	podInfoByIP, err := podInfoByIPProvider.PodInfoByIP()
+	if err != nil {
+		return errors.Wrap(err, "err in CNS initialization")
+	}
+
+	// errors.Wrap provides additional context, and return nil if the err input arg is nil
+	// Call CNSRestService init cns passing those two things.
+	return errors.Wrap(restserver.ResponseCodeToError(rc.CNSRestService.ReconcileNCState(&ncRequest, podInfoByIP, nnc.Status.Scaler, nnc.Spec)), "err in CNS reconciliation")
 }
 
 // kubePodsToPodInfoByIP maps kubernetes pods to cns.PodInfos by IP
-func (rc *requestController) kubePodsToPodInfoByIP(pods []corev1.Pod) map[string]cns.PodInfo {
+func (rc *requestController) kubePodsToPodInfoByIP(pods []corev1.Pod) (map[string]cns.PodInfo, error) {
 	podInfoByIP := map[string]cns.PodInfo{}
 	for _, pod := range pods {
 		if !pod.Spec.HostNetwork {
+			if _, ok := podInfoByIP[pod.Status.PodIP]; ok {
+				return nil, errors.Wrap(cns.ErrDuplicateIP, pod.Status.PodIP)
+			}
 			podInfoByIP[pod.Status.PodIP] = cns.NewPodInfo("", "", pod.Name, pod.Namespace)
 		}
 	}
-	return podInfoByIP
+	return podInfoByIP, nil
 }
 
 // UpdateCRDSpec updates the CRD spec
-func (rc *requestController) UpdateCRDSpec(ctx context.Context, crdSpec nnc.NodeNetworkConfigSpec) error {
+func (rc *requestController) UpdateCRDSpec(ctx context.Context, nnc v1alpha.NodeNetworkConfigSpec) error {
 	nodeNetworkConfig, err := rc.getNodeNetConfig(ctx, rc.nodeName, k8sNamespace)
 	if err != nil {
 		logger.Errorf("[cns-rc] Error getting CRD when updating spec %v", err)
 		return err
 	}
 
-	logger.Printf("[cns-rc] Received update for IP count %+v", crdSpec)
+	logger.Printf("[cns-rc] Received update for IP count %+v", nnc)
 
-	//Update the CRD spec
-	crdSpec.DeepCopyInto(&nodeNetworkConfig.Spec)
+	// Update the CRD spec
+	nnc.DeepCopyInto(&nodeNetworkConfig.Spec)
 
 	logger.Printf("[cns-rc] After deep copy %+v", nodeNetworkConfig.Spec)
 
-	//Send update to API server
+	// Send update to API server
 	if err := rc.updateNodeNetConfig(ctx, nodeNetworkConfig); err != nil {
 		logger.Errorf("[cns-rc] Error updating CRD spec %v", err)
 		return err
 	}
 
+	// record IP metrics
+	requestedIPs.Set(float64(nnc.RequestedIPCount))
+	unusedIPs.Set(float64(len(nnc.IPsNotInUse)))
 	return nil
 }
 
 // getNodeNetConfig gets the nodeNetworkConfig CRD given the name and namespace of the CRD object
-func (rc *requestController) getNodeNetConfig(ctx context.Context, name, namespace string) (*nnc.NodeNetworkConfig, error) {
-	nodeNetworkConfig := &nnc.NodeNetworkConfig{}
+func (rc *requestController) getNodeNetConfig(ctx context.Context, name, namespace string) (*v1alpha.NodeNetworkConfig, error) {
+	nodeNetworkConfig := &v1alpha.NodeNetworkConfig{}
 
 	err := rc.KubeClient.Get(ctx, client.ObjectKey{
 		Namespace: namespace,
 		Name:      name,
 	}, nodeNetworkConfig)
-
 	if err != nil {
 		return nil, err
 	}
@@ -323,26 +333,15 @@ func (rc *requestController) getNodeNetConfig(ctx context.Context, name, namespa
 }
 
 // getNodeNetConfigDirect gets the nodeNetworkConfig CRD using a direct client
-func (rc *requestController) getNodeNetConfigDirect(ctx context.Context, name, namespace string) (*nnc.NodeNetworkConfig, error) {
-	var (
-		nodeNetworkConfig *nnc.NodeNetworkConfig
-		err               error
-	)
-
-	if nodeNetworkConfig, err = rc.directCRDClient.Get(ctx, name, namespace, crdTypeName); err != nil {
-		return nil, err
-	}
-
-	return nodeNetworkConfig, nil
+func (rc *requestController) getNodeNetConfigDirect(ctx context.Context, name, namespace string) (*v1alpha.NodeNetworkConfig, error) {
+	//nolint:wrapcheck
+	return rc.directCRDClient.Get(ctx, name, namespace, crdTypeName)
 }
 
 // updateNodeNetConfig updates the nodeNetConfig object in the API server with the given nodeNetworkConfig object
-func (rc *requestController) updateNodeNetConfig(ctx context.Context, nodeNetworkConfig *nnc.NodeNetworkConfig) error {
-	if err := rc.KubeClient.Update(ctx, nodeNetworkConfig); err != nil {
-		return err
-	}
-
-	return nil
+func (rc *requestController) updateNodeNetConfig(ctx context.Context, nnc *v1alpha.NodeNetworkConfig) error {
+	//nolint:wrapcheck
+	return rc.KubeClient.Update(ctx, nnc)
 }
 
 // getAllPods gets all pods running on the node using the direct API client
@@ -357,35 +356,4 @@ func (rc *requestController) getAllPods(ctx context.Context, node string) (*core
 	}
 
 	return pods, nil
-}
-
-// isNotDefined tells whether the given error is a CRD not defined error
-func (rc *requestController) isNotDefined(err error) bool {
-	var (
-		statusError *apierrors.StatusError
-		ok          bool
-		notDefined  bool
-		cause       metav1.StatusCause
-	)
-
-	if err == nil {
-		return false
-	}
-
-	if statusError, ok = err.(*apierrors.StatusError); !ok {
-		return false
-	}
-
-	if len(statusError.ErrStatus.Details.Causes) > 0 {
-		for _, cause = range statusError.ErrStatus.Details.Causes {
-			if cause.Type == metav1.CauseTypeUnexpectedServerResponse {
-				if apierrors.IsNotFound(err) {
-					notDefined = true
-					break
-				}
-			}
-		}
-	}
-
-	return notDefined
 }

@@ -19,7 +19,7 @@ import (
 	"github.com/Azure/azure-container-networking/cns/nmagentclient"
 	"github.com/Azure/azure-container-networking/cns/types"
 	"github.com/Azure/azure-container-networking/common"
-	nnc "github.com/Azure/azure-container-networking/nodenetworkconfig/api/v1alpha"
+	"github.com/Azure/azure-container-networking/crd/nodenetworkconfig/api/v1alpha"
 	"github.com/pkg/errors"
 )
 
@@ -117,7 +117,7 @@ func (service *HTTPRestService) SyncNodeStatus(
 			var resp cns.CreateNetworkContainerResponse
 			if err = json.Unmarshal(w.Body.Bytes(), &resp); err == nil && resp.Response.ReturnCode == types.Success {
 				service.Lock()
-				ncstatus, _ := service.state.ContainerStatus[ncid]
+				ncstatus := service.state.ContainerStatus[ncid]
 				ncstatus.VfpUpdateComplete = !waitingForUpdate
 				service.state.ContainerStatus[ncid] = ncstatus
 				service.Unlock()
@@ -211,8 +211,8 @@ func (service *HTTPRestService) SyncHostNCVersion(ctx context.Context, channelMo
 
 // This API will be called by CNS RequestController on CRD update.
 func (service *HTTPRestService) ReconcileNCState(
-	ncRequest *cns.CreateNetworkContainerRequest, podInfoByIP map[string]cns.PodInfo, scalar nnc.Scaler,
-	spec nnc.NodeNetworkConfigSpec) types.ResponseCode {
+	ncRequest *cns.CreateNetworkContainerRequest, podInfoByIP map[string]cns.PodInfo, scalar v1alpha.Scaler,
+	spec v1alpha.NodeNetworkConfigSpec) types.ResponseCode {
 	logger.Printf("Reconciling NC state with podInfo %+v", podInfoByIP)
 	// check if ncRequest is null, then return as there is no CRD state yet
 	if ncRequest == nil {
@@ -221,14 +221,11 @@ func (service *HTTPRestService) ReconcileNCState(
 	}
 
 	// If the NC was created successfully, then reconcile the allocated pod state
-	returnCode := service.CreateOrUpdateNetworkContainerInternal(*ncRequest)
+	returnCode := service.CreateOrUpdateNetworkContainerInternal(ncRequest)
 	if returnCode != types.Success {
 		return returnCode
 	}
-	returnCode = service.UpdateIPAMPoolMonitorInternal(scalar, spec)
-	if returnCode != types.Success {
-		return returnCode
-	}
+	service.IPAMPoolMonitor.Update(scalar, spec)
 
 	// now parse the secondaryIP list, if it exists in PodInfo list, then allocate that ip
 	for _, secIpConfig := range ncRequest.SecondaryIPConfigs {
@@ -306,7 +303,7 @@ func (service *HTTPRestService) DeleteNetworkContainerInternal(
 
 // This API will be called by CNS RequestController on CRD update.
 func (service *HTTPRestService) CreateOrUpdateNetworkContainerInternal(
-	req cns.CreateNetworkContainerRequest,
+	req *cns.CreateNetworkContainerRequest,
 ) types.ResponseCode {
 	if req.NetworkContainerid == "" {
 		logger.Errorf("[Azure CNS] Error. NetworkContainerid is empty")
@@ -340,33 +337,21 @@ func (service *HTTPRestService) CreateOrUpdateNetworkContainerInternal(
 	existingNCInfo, ok := service.getNetworkContainerDetails(req.NetworkContainerid)
 	if ok {
 		existingReq := existingNCInfo.CreateNetworkContainerRequest
-		if reflect.DeepEqual(existingReq.IPConfiguration, req.IPConfiguration) != true {
+		if !reflect.DeepEqual(existingReq.IPConfiguration, req.IPConfiguration) {
 			logger.Errorf("[Azure CNS] Error. PrimaryCA is not same, NCId %s, old CA %s, new CA %s", req.NetworkContainerid, existingReq.PrimaryInterfaceIdentifier, req.PrimaryInterfaceIdentifier)
 			return types.PrimaryCANotSame
 		}
 	}
 
 	// This will Create Or Update the NC state.
-	returnCode, returnMessage := service.saveNetworkContainerGoalState(req)
+	returnCode, returnMessage := service.saveNetworkContainerGoalState(*req)
 
 	// If the NC was created successfully, log NC snapshot.
 	if returnCode == 0 {
-		logNCSnapshot(req)
+		logNCSnapshot(*req)
 	} else {
 		logger.Errorf(returnMessage)
 	}
 
 	return returnCode
-}
-
-func (service *HTTPRestService) UpdateIPAMPoolMonitorInternal(
-	scalar nnc.Scaler, spec nnc.NodeNetworkConfigSpec,
-) types.ResponseCode {
-	if err := service.IPAMPoolMonitor.Update(scalar, spec); err != nil {
-		logger.Errorf("[cns-rc] Error creating or updating IPAM Pool Monitor: %v", err)
-		// requeue
-		return types.UnexpectedError
-	}
-
-	return 0
 }

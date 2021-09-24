@@ -216,7 +216,7 @@ func (nm *networkManager) configureHcnNetwork(nwInfo *NetworkInfo, extIf *extern
 			ServerList: nwInfo.DNS.Servers,
 		},
 		Ipams: []hcn.Ipam{
-			hcn.Ipam{
+			{
 				Type: hcnIpamTypeStatic,
 			},
 		},
@@ -285,7 +285,7 @@ func (nm *networkManager) configureHcnNetwork(nwInfo *NetworkInfo, extIf *extern
 			IpAddressPrefix: subnet.Prefix.String(),
 			// Set the Gateway route
 			Routes: []hcn.Route{
-				hcn.Route{
+				{
 					NextHop:           subnet.Gateway.String(),
 					DestinationPrefix: defaultRouteCIDR,
 				},
@@ -313,8 +313,7 @@ func (nm *networkManager) newNetworkImplHnsV2(nwInfo *NetworkInfo, extIf *extern
 
 	// Create the HNS network.
 	log.Printf("[net] Creating hcn network: %+v", hcnNetwork)
-	hnsResponse, err := hcnNetwork.Create()
-
+	hnsResponse, err := hnsv2.CreateNetwork(hcnNetwork)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create hcn network: %s due to error: %v", hcnNetwork.Name, err)
 	}
@@ -384,11 +383,11 @@ func (nm *networkManager) deleteNetworkImplHnsV2(nw *network) error {
 	var err error
 	log.Printf("[net] Deleting hcn network with id: %s", nw.HnsId)
 
-	if hcnNetwork, err = hcn.GetNetworkByID(nw.HnsId); err != nil {
+	if hcnNetwork, err = hnsv2.GetNetworkByID(nw.HnsId); err != nil {
 		return fmt.Errorf("Failed to get hcn network with id: %s due to err: %v", nw.HnsId, err)
 	}
 
-	if err = hcnNetwork.Delete(); err != nil {
+	if err = hnsv2.DeleteNetwork(hcnNetwork); err != nil {
 		return fmt.Errorf("Failed to delete hcn network: %s due to error: %v", nw.HnsId, err)
 	}
 

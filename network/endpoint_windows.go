@@ -4,18 +4,24 @@
 package network
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
 
-	"github.com/Azure/azure-container-networking/cns/cnsclient"
 	"github.com/Azure/azure-container-networking/log"
+	"github.com/Azure/azure-container-networking/netlink"
+	"github.com/Azure/azure-container-networking/network/hnswrapper"
 	"github.com/Azure/azure-container-networking/network/policy"
 	"github.com/Azure/azure-container-networking/platform"
 	"github.com/Microsoft/hcsshim"
 	"github.com/Microsoft/hcsshim/hcn"
 )
+
+// this hnsv2 variable is package level variable in network
+// we do this to avoid passing around os specific objects in platform agnostic code
+var hnsv2 hnswrapper.HnsV2WrapperInterface = hnswrapper.Hnsv2wrapper{}
 
 const (
 	// hcnSchemaVersionMajor indicates major version number for hcn schema
@@ -33,6 +39,29 @@ const (
 	// Container interface name prefix
 	containerIfNamePrefix = "vEthernet"
 )
+
+type AzureHNSEndpointClient interface {
+	GetHNSEndpointByName(endpointName string) (*hcsshim.HNSEndpoint, error)
+	GetHNSEndpointByID(endpointID string) (*hcsshim.HNSEndpoint, error)
+	HotAttachEndpoint(containerID string, endpointID string) error
+	IsAttached(hnsep *hcsshim.HNSEndpoint, containerID string) (bool, error)
+}
+
+func (az AzureHNSEndpoint) GetHNSEndpointByName(endpointName string) (*hcsshim.HNSEndpoint, error) {
+	return hcsshim.GetHNSEndpointByName(endpointName)
+}
+
+func (az AzureHNSEndpoint) GetHNSEndpointByID(id string) (*hcsshim.HNSEndpoint, error) {
+	return hcsshim.GetHNSEndpointByID(id)
+}
+
+func (az AzureHNSEndpoint) HotAttachEndpoint(containerID, endpointID string) error {
+	return hcsshim.HotAttachEndpoint(containerID, endpointID)
+}
+
+func (az AzureHNSEndpoint) IsAttached(hnsep *hcsshim.HNSEndpoint, containerID string) (bool, error) {
+	return hnsep.IsAttached(containerID)
+}
 
 // HotAttachEndpoint is a wrapper of hcsshim's HotAttachEndpoint.
 func (endpoint *EndpointInfo) HotAttachEndpoint(containerID string) error {
@@ -64,13 +93,13 @@ func ConstructEndpointID(containerID string, netNsPath string, ifName string) (s
 }
 
 // newEndpointImpl creates a new endpoint in the network.
-func (nw *network) newEndpointImpl(epInfo *EndpointInfo) (*endpoint, error) {
+func (nw *network) newEndpointImpl(cli apipaClient, _ netlink.NetlinkInterface, epInfo *EndpointInfo) (*endpoint, error) {
 	if useHnsV2, err := UseHnsV2(epInfo.NetNsPath); useHnsV2 {
 		if err != nil {
 			return nil, err
 		}
 
-		return nw.newEndpointImplHnsV2(epInfo)
+		return nw.newEndpointImplHnsV2(cli, epInfo)
 	}
 
 	return nw.newEndpointImplHnsV1(epInfo)
@@ -251,15 +280,9 @@ func (nw *network) configureHcnEndpoint(epInfo *EndpointInfo) (*hcn.HostComputeE
 	return hcnEndpoint, nil
 }
 
-func (nw *network) deleteHostNCApipaEndpoint(networkContainerID string) error {
-	cnsClient, err := cnsclient.GetCnsClient()
-	if err != nil {
-		log.Errorf("Failed to get CNS client. Error %v", err)
-		return err
-	}
-
+func (nw *network) deleteHostNCApipaEndpoint(cli apipaClient, networkContainerID string) error {
 	log.Printf("[net] Deleting HostNCApipaEndpoint for network container: %s", networkContainerID)
-	err = cnsClient.DeleteHostNCApipaEndpoint(networkContainerID)
+	err := cli.DeleteHostNCApipaEndpoint(context.TODO(), networkContainerID)
 	log.Printf("[net] Completed HostNCApipaEndpoint deletion for network container: %s"+
 		" with error: %v", networkContainerID, err)
 
@@ -268,10 +291,9 @@ func (nw *network) deleteHostNCApipaEndpoint(networkContainerID string) error {
 
 // createHostNCApipaEndpoint creates a new endpoint in the HostNCApipaNetwork
 // for host container connectivity
-func (nw *network) createHostNCApipaEndpoint(epInfo *EndpointInfo) error {
+func (nw *network) createHostNCApipaEndpoint(cli apipaClient, epInfo *EndpointInfo) error {
 	var (
 		err                   error
-		cnsClient             *cnsclient.CNSClient
 		hostNCApipaEndpointID string
 		namespace             *hcn.HostComputeNamespace
 	)
@@ -281,22 +303,17 @@ func (nw *network) createHostNCApipaEndpoint(epInfo *EndpointInfo) error {
 			" due to error: %v", epInfo.NetNsPath, err)
 	}
 
-	if cnsClient, err = cnsclient.GetCnsClient(); err != nil {
-		log.Errorf("Failed to get CNS client. Error %v", err)
-		return err
-	}
-
 	log.Printf("[net] Creating HostNCApipaEndpoint for host container connectivity for NC: %s",
 		epInfo.NetworkContainerID)
 
 	if hostNCApipaEndpointID, err =
-		cnsClient.CreateHostNCApipaEndpoint(epInfo.NetworkContainerID); err != nil {
+		cli.CreateHostNCApipaEndpoint(context.TODO(), epInfo.NetworkContainerID); err != nil {
 		return err
 	}
 
 	defer func() {
 		if err != nil {
-			nw.deleteHostNCApipaEndpoint(epInfo.NetworkContainerID)
+			nw.deleteHostNCApipaEndpoint(cli, epInfo.NetworkContainerID)
 		}
 	}()
 
@@ -309,7 +326,7 @@ func (nw *network) createHostNCApipaEndpoint(epInfo *EndpointInfo) error {
 }
 
 // newEndpointImplHnsV2 creates a new endpoint in the network using HnsV2
-func (nw *network) newEndpointImplHnsV2(epInfo *EndpointInfo) (*endpoint, error) {
+func (nw *network) newEndpointImplHnsV2(cli apipaClient, epInfo *EndpointInfo) (*endpoint, error) {
 	hcnEndpoint, err := nw.configureHcnEndpoint(epInfo)
 	if err != nil {
 		log.Printf("[net] Failed to configure hcn endpoint due to error: %v", err)
@@ -318,7 +335,7 @@ func (nw *network) newEndpointImplHnsV2(epInfo *EndpointInfo) (*endpoint, error)
 
 	// Create the HCN endpoint.
 	log.Printf("[net] Creating hcn endpoint: %+v", hcnEndpoint)
-	hnsResponse, err := hcnEndpoint.Create()
+	hnsResponse, err := hnsv2.CreateEndpoint(hcnEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create endpoint: %s due to error: %v", hcnEndpoint.Name, err)
 	}
@@ -328,24 +345,24 @@ func (nw *network) newEndpointImplHnsV2(epInfo *EndpointInfo) (*endpoint, error)
 	defer func() {
 		if err != nil {
 			log.Printf("[net] Deleting hcn endpoint with id: %s", hnsResponse.Id)
-			err = hnsResponse.Delete()
+			err = hnsv2.DeleteEndpoint(hnsResponse)
 			log.Printf("[net] Completed hcn endpoint deletion for id: %s with error: %v", hnsResponse.Id, err)
 		}
 	}()
 
 	var namespace *hcn.HostComputeNamespace
-	if namespace, err = hcn.GetNamespaceByID(epInfo.NetNsPath); err != nil {
+	if namespace, err = hnsv2.GetNamespaceByID(epInfo.NetNsPath); err != nil {
 		return nil, fmt.Errorf("Failed to get hcn namespace: %s due to error: %v", epInfo.NetNsPath, err)
 	}
 
-	if err = hcn.AddNamespaceEndpoint(namespace.Id, hnsResponse.Id); err != nil {
+	if err = hnsv2.AddNamespaceEndpoint(namespace.Id, hnsResponse.Id); err != nil {
 		return nil, fmt.Errorf("[net] Failed to add endpoint: %s to hcn namespace: %s due to error: %v",
 			hnsResponse.Id, namespace.Id, err)
 	}
 
 	defer func() {
 		if err != nil {
-			if errRemoveNsEp := hcn.RemoveNamespaceEndpoint(namespace.Id, hnsResponse.Id); errRemoveNsEp != nil {
+			if errRemoveNsEp := hnsv2.RemoveNamespaceEndpoint(namespace.Id, hnsResponse.Id); errRemoveNsEp != nil {
 				log.Printf("[net] Failed to remove endpoint: %s from namespace: %s due to error: %v",
 					hnsResponse.Id, hnsResponse.Id, errRemoveNsEp)
 			}
@@ -354,7 +371,7 @@ func (nw *network) newEndpointImplHnsV2(epInfo *EndpointInfo) (*endpoint, error)
 
 	// If the Host - container connectivity is requested, create endpoint in HostNCApipaNetwork
 	if epInfo.AllowInboundFromHostToNC || epInfo.AllowInboundFromNCToHost {
-		if err = nw.createHostNCApipaEndpoint(epInfo); err != nil {
+		if err = nw.createHostNCApipaEndpoint(cli, epInfo); err != nil {
 			return nil, fmt.Errorf("Failed to create HostNCApipaEndpoint due to error: %v", err)
 		}
 	}
@@ -398,13 +415,13 @@ func (nw *network) newEndpointImplHnsV2(epInfo *EndpointInfo) (*endpoint, error)
 }
 
 // deleteEndpointImpl deletes an existing endpoint from the network.
-func (nw *network) deleteEndpointImpl(ep *endpoint) error {
+func (nw *network) deleteEndpointImpl(cli apipaClient, _ netlink.NetlinkInterface, ep *endpoint) error {
 	if useHnsV2, err := UseHnsV2(ep.NetNs); useHnsV2 {
 		if err != nil {
 			return err
 		}
 
-		return nw.deleteEndpointImplHnsV2(ep)
+		return nw.deleteEndpointImplHnsV2(cli, ep)
 	}
 
 	return nw.deleteEndpointImplHnsV1(ep)
@@ -430,14 +447,14 @@ func (nw *network) deleteEndpointImplHnsV1(ep *endpoint) error {
 }
 
 // deleteEndpointImplHnsV2 deletes an existing endpoint from the network using HNS v2.
-func (nw *network) deleteEndpointImplHnsV2(ep *endpoint) error {
+func (nw *network) deleteEndpointImplHnsV2(cli apipaClient, ep *endpoint) error {
 	var (
 		hcnEndpoint *hcn.HostComputeEndpoint
 		err         error
 	)
 
 	if ep.AllowInboundFromHostToNC || ep.AllowInboundFromNCToHost {
-		if err = nw.deleteHostNCApipaEndpoint(ep.NetworkContainerID); err != nil {
+		if err = nw.deleteHostNCApipaEndpoint(cli, ep.NetworkContainerID); err != nil {
 			log.Errorf("[net] Failed to delete HostNCApipaEndpoint due to error: %v", err)
 			return err
 		}
@@ -445,17 +462,17 @@ func (nw *network) deleteEndpointImplHnsV2(ep *endpoint) error {
 
 	log.Printf("[net] Deleting hcn endpoint with id: %s", ep.HnsId)
 
-	if hcnEndpoint, err = hcn.GetEndpointByID(ep.HnsId); err != nil {
+	if hcnEndpoint, err = hnsv2.GetEndpointByID(ep.HnsId); err != nil {
 		return fmt.Errorf("Failed to get hcn endpoint with id: %s due to err: %v", ep.HnsId, err)
 	}
 
 	// Remove this endpoint from the namespace
-	if err = hcn.RemoveNamespaceEndpoint(hcnEndpoint.HostComputeNamespace, hcnEndpoint.Id); err != nil {
+	if err = hnsv2.RemoveNamespaceEndpoint(hcnEndpoint.HostComputeNamespace, hcnEndpoint.Id); err != nil {
 		return fmt.Errorf("Failed to remove hcn endpoint: %s from namespace: %s due to error: %v", ep.HnsId,
 			hcnEndpoint.HostComputeNamespace, err)
 	}
 
-	if err = hcnEndpoint.Delete(); err != nil {
+	if err = hnsv2.DeleteEndpoint(hcnEndpoint); err != nil {
 		return fmt.Errorf("Failed to delete hcn endpoint: %s due to error: %v", ep.HnsId, err)
 	}
 
@@ -470,6 +487,6 @@ func (ep *endpoint) getInfoImpl(epInfo *EndpointInfo) {
 }
 
 // updateEndpointImpl in windows does nothing for now
-func (nw *network) updateEndpointImpl(existingEpInfo *EndpointInfo, targetEpInfo *EndpointInfo) (*endpoint, error) {
+func (nm *networkManager) updateEndpointImpl(nw *network, existingEpInfo *EndpointInfo, targetEpInfo *EndpointInfo) (*endpoint, error) {
 	return nil, nil
 }

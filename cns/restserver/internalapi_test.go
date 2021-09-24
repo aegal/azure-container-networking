@@ -29,18 +29,7 @@ const (
 	initPoolSize        = 10
 )
 
-var (
-	dnsservers        = []string{"8.8.8.8", "8.8.4.4"}
-	hostSupportedApis = `<SupportedRequestTypes>
-							<type>GetSupportedApis</type>
-							<type>GetIpRangesV1</type>
-							<type>GetIpRangesV2</type>
-							<type>GetInterfaceInfoV1</type>
-							<type>PortContainerIOVInformationV1</type>
-							<type>NetworkManagement</type>
-							<type>NetworkManagementDNSSupport</type>
-						</SupportedRequestTypes>`
-)
+var dnsservers = []string{"8.8.8.8", "8.8.4.4"}
 
 func TestCreateOrUpdateNetworkContainerInternal(t *testing.T) {
 	restartService()
@@ -164,7 +153,7 @@ func TestPendingIPsGotUpdatedWhenSyncHostNCVersion(t *testing.T) {
 	if len(receivedSecondaryIPConfigs) != 1 {
 		t.Errorf("Unexpected receivedSecondaryIPConfigs length %d, expeted length is 1", len(receivedSecondaryIPConfigs))
 	}
-	for i, _ := range receivedSecondaryIPConfigs {
+	for i := range receivedSecondaryIPConfigs {
 		podIPConfigState := svc.PodIPConfigState[i]
 		if podIPConfigState.State != cns.PendingProgramming {
 			t.Errorf("Unexpected State %s, expeted State is %s, received %s, IP address is %s", podIPConfigState.State, cns.PendingProgramming, podIPConfigState.State, podIPConfigState.IPAddress)
@@ -177,7 +166,7 @@ func TestPendingIPsGotUpdatedWhenSyncHostNCVersion(t *testing.T) {
 	if len(receivedSecondaryIPConfigs) != 1 {
 		t.Errorf("Unexpected receivedSecondaryIPConfigs length %d, expeted length is 1", len(receivedSecondaryIPConfigs))
 	}
-	for i, _ := range receivedSecondaryIPConfigs {
+	for i := range receivedSecondaryIPConfigs {
 		podIPConfigState := svc.PodIPConfigState[i]
 		if podIPConfigState.State != cns.Available {
 			t.Errorf("Unexpected State %s, expeted State is %s, received %s, IP address is %s", podIPConfigState.State, cns.Available, podIPConfigState.State, podIPConfigState.IPAddress)
@@ -203,6 +192,7 @@ func createNCReqeustForSyncHostNCVersion(t *testing.T) cns.CreateNetworkContaine
 	req := createNCReqInternal(t, secondaryIPConfigs, ncID, strconv.Itoa(ncVersion))
 	return req
 }
+
 func TestReconcileNCWithEmptyState(t *testing.T) {
 	restartService()
 	setEnv(t)
@@ -225,7 +215,7 @@ func TestReconcileNCWithExistingState(t *testing.T) {
 
 	secondaryIPConfigs := make(map[string]cns.SecondaryIPConfig)
 
-	var startingIndex = 6
+	startingIndex := 6
 	for i := 0; i < 4; i++ {
 		ipaddress := "10.0.0." + strconv.Itoa(startingIndex)
 		secIpConfig := newSecondaryIPConfig(ipaddress, -1)
@@ -241,12 +231,12 @@ func TestReconcileNCWithExistingState(t *testing.T) {
 	}
 
 	expectedNcCount := len(svc.state.ContainerStatus)
-	returnCode := svc.ReconcileNCState(&req, expectedAllocatedPods, fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
+	returnCode := svc.ReconcileNCState(req, expectedAllocatedPods, fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
 	if returnCode != types.Success {
 		t.Errorf("Unexpected failure on reconcile with no state %d", returnCode)
 	}
 
-	validateNCStateAfterReconcile(t, &req, expectedNcCount+1, expectedAllocatedPods)
+	validateNCStateAfterReconcile(t, req, expectedNcCount+1, expectedAllocatedPods)
 }
 
 func TestReconcileNCWithExistingStateFromInterfaceID(t *testing.T) {
@@ -258,7 +248,7 @@ func TestReconcileNCWithExistingStateFromInterfaceID(t *testing.T) {
 
 	secondaryIPConfigs := make(map[string]cns.SecondaryIPConfig)
 
-	var startingIndex = 6
+	startingIndex := 6
 	for i := 0; i < 4; i++ {
 		ipaddress := "10.0.0." + strconv.Itoa(startingIndex)
 		secIpConfig := newSecondaryIPConfig(ipaddress, -1)
@@ -274,12 +264,12 @@ func TestReconcileNCWithExistingStateFromInterfaceID(t *testing.T) {
 	}
 
 	expectedNcCount := len(svc.state.ContainerStatus)
-	returnCode := svc.ReconcileNCState(&req, expectedAllocatedPods, fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
+	returnCode := svc.ReconcileNCState(req, expectedAllocatedPods, fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
 	if returnCode != types.Success {
 		t.Errorf("Unexpected failure on reconcile with no state %d", returnCode)
 	}
 
-	validateNCStateAfterReconcile(t, &req, expectedNcCount+1, expectedAllocatedPods)
+	validateNCStateAfterReconcile(t, req, expectedNcCount+1, expectedAllocatedPods)
 }
 
 func TestReconcileNCWithSystemPods(t *testing.T) {
@@ -289,7 +279,7 @@ func TestReconcileNCWithSystemPods(t *testing.T) {
 
 	secondaryIPConfigs := make(map[string]cns.SecondaryIPConfig)
 
-	var startingIndex = 6
+	startingIndex := 6
 	for i := 0; i < 4; i++ {
 		ipaddress := "10.0.0." + strconv.Itoa(startingIndex)
 		secIpConfig := newSecondaryIPConfig(ipaddress, -1)
@@ -306,13 +296,13 @@ func TestReconcileNCWithSystemPods(t *testing.T) {
 	expectedAllocatedPods["192.168.0.1"] = cns.NewPodInfo("", "", "systempod", "kube-system")
 
 	expectedNcCount := len(svc.state.ContainerStatus)
-	returnCode := svc.ReconcileNCState(&req, expectedAllocatedPods, fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
+	returnCode := svc.ReconcileNCState(req, expectedAllocatedPods, fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
 	if returnCode != types.Success {
 		t.Errorf("Unexpected failure on reconcile with no state %d", returnCode)
 	}
 
 	delete(expectedAllocatedPods, "192.168.0.1")
-	validateNCStateAfterReconcile(t, &req, expectedNcCount, expectedAllocatedPods)
+	validateNCStateAfterReconcile(t, req, expectedNcCount, expectedAllocatedPods)
 }
 
 func setOrchestratorTypeInternal(orchestratorType string) {
@@ -324,7 +314,7 @@ func validateCreateNCInternal(t *testing.T, secondaryIpCount int, ncVersion stri
 	secondaryIPConfigs := make(map[string]cns.SecondaryIPConfig)
 	ncId := "testNc1"
 	ncVersionInInt, _ := strconv.Atoi(ncVersion)
-	var startingIndex = 6
+	startingIndex := 6
 	for i := 0; i < secondaryIpCount; i++ {
 		ipaddress := "10.0.0." + strconv.Itoa(startingIndex)
 		secIpConfig := newSecondaryIPConfig(ipaddress, ncVersionInInt)
@@ -340,7 +330,7 @@ func validateCreateOrUpdateNCInternal(t *testing.T, secondaryIpCount int, ncVers
 	secondaryIPConfigs := make(map[string]cns.SecondaryIPConfig)
 	ncId := "testNc1"
 	ncVersionInInt, _ := strconv.Atoi(ncVersion)
-	var startingIndex = 6
+	startingIndex := 6
 	for i := 0; i < secondaryIpCount; i++ {
 		ipaddress := "10.0.0." + strconv.Itoa(startingIndex)
 		secIpConfig := newSecondaryIPConfig(ipaddress, ncVersionInInt)
@@ -365,7 +355,7 @@ func validateCreateOrUpdateNCInternal(t *testing.T, secondaryIpCount int, ncVers
 
 	// now Scale down, delete 3 ipaddresses from secondaryIpConfig req
 	fmt.Println("Validate Scale down")
-	var count = 0
+	count := 0
 	for ipid := range secondaryIPConfigs {
 		delete(secondaryIPConfigs, ipid)
 		count++
@@ -392,11 +382,10 @@ func createAndValidateNCRequest(t *testing.T, secondaryIPConfigs map[string]cns.
 	if returnCode != 0 {
 		t.Fatalf("Failed to createNetworkContainerRequest, req: %+v, err: %d", req, returnCode)
 	}
-	returnCode = svc.UpdateIPAMPoolMonitorInternal(fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
-	if returnCode != 0 {
-		t.Fatalf("Failed to UpdateIPAMPoolMonitorInternal, err: %d", returnCode)
-	}
-	validateNetworkRequest(t, req)
+	svc.IPAMPoolMonitor.Update(
+		fakes.NewFakeScalar(releasePercent, requestPercent, batchSize),
+		fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
+	validateNetworkRequest(t, *req)
 }
 
 // Validate the networkRequest is persisted.
@@ -421,7 +410,7 @@ func validateNetworkRequest(t *testing.T, req cns.CreateNetworkContainerRequest)
 		t.Fatalf("Failed as Secondary IP count doesnt match in PodIpConfig state, expected:%d, actual %d", len(req.SecondaryIPConfigs), len(svc.PodIPConfigState))
 	}
 
-	var expectedIPStatus string
+	var expectedIPStatus cns.IPConfigState
 	// 0 is the default NMAgent version return from fake GetNetworkContainerInfoFromHost
 	if containerStatus.CreateNetworkContainerRequest.Version > "0" {
 		expectedIPStatus = cns.PendingProgramming
@@ -429,7 +418,7 @@ func validateNetworkRequest(t *testing.T, req cns.CreateNetworkContainerRequest)
 		expectedIPStatus = cns.Available
 	}
 	t.Logf("NC version in container status is %s, HostVersion is %s", containerStatus.CreateNetworkContainerRequest.Version, containerStatus.HostVersion)
-	var alreadyValidated = make(map[string]string)
+	alreadyValidated := make(map[string]string)
 	for ipid, ipStatus := range svc.PodIPConfigState {
 		if ipaddress, found := alreadyValidated[ipid]; !found {
 			if secondaryIpConfig, ok := req.SecondaryIPConfigs[ipid]; !ok {
@@ -464,7 +453,7 @@ func validateNetworkRequest(t *testing.T, req cns.CreateNetworkContainerRequest)
 	}
 }
 
-func generateNetworkContainerRequest(secondaryIps map[string]cns.SecondaryIPConfig, ncId string, ncVersion string) cns.CreateNetworkContainerRequest {
+func generateNetworkContainerRequest(secondaryIps map[string]cns.SecondaryIPConfig, ncID, ncVersion string) *cns.CreateNetworkContainerRequest {
 	var ipConfig cns.IPConfiguration
 	ipConfig.DNSServers = dnsservers
 	ipConfig.GatewayIPAddress = gatewayIp
@@ -475,7 +464,7 @@ func generateNetworkContainerRequest(secondaryIps map[string]cns.SecondaryIPConf
 
 	req := cns.CreateNetworkContainerRequest{
 		NetworkContainerType: dockerContainerType,
-		NetworkContainerid:   ncId,
+		NetworkContainerid:   ncID,
 		IPConfiguration:      ipConfig,
 		Version:              ncVersion,
 	}
@@ -484,13 +473,13 @@ func generateNetworkContainerRequest(secondaryIps map[string]cns.SecondaryIPConf
 	req.SecondaryIPConfigs = make(map[string]cns.SecondaryIPConfig)
 	for k, v := range secondaryIps {
 		req.SecondaryIPConfigs[k] = v
-		ipconfig, _ := req.SecondaryIPConfigs[k]
+		ipconfig := req.SecondaryIPConfigs[k]
 		ipconfig.NCVersion = ncVersionInInt
 	}
 
 	fmt.Printf("NC Request %+v", req)
 
-	return req
+	return &req
 }
 
 func validateNCStateAfterReconcile(t *testing.T, ncRequest *cns.CreateNetworkContainerRequest, expectedNcCount int, expectedAllocatedPods map[string]cns.PodInfo) {
@@ -557,11 +546,10 @@ func createNCReqInternal(t *testing.T, secondaryIPConfigs map[string]cns.Seconda
 	if returnCode != 0 {
 		t.Fatalf("Failed to createNetworkContainerRequest, req: %+v, err: %d", req, returnCode)
 	}
-	returnCode = svc.UpdateIPAMPoolMonitorInternal(fakes.NewFakeScalar(releasePercent, requestPercent, batchSize), fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
-	if returnCode != 0 {
-		t.Fatalf("Failed to UpdateIPAMPoolMonitorInternal, err: %d", returnCode)
-	}
-	return req
+	svc.IPAMPoolMonitor.Update(
+		fakes.NewFakeScalar(releasePercent, requestPercent, batchSize),
+		fakes.NewFakeNodeNetworkConfigSpec(initPoolSize))
+	return *req
 }
 
 func restartService() {

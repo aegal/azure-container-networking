@@ -3,12 +3,12 @@ package multitenantoperator
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/Azure/azure-container-networking/cns"
 	"github.com/Azure/azure-container-networking/cns/logger"
 	"github.com/Azure/azure-container-networking/cns/multitenantcontroller/mockclients"
-	ncapi "github.com/Azure/azure-container-networking/crds/multitenantnetworkcontainer/api/v1alpha1"
+	cnstypes "github.com/Azure/azure-container-networking/cns/types"
+	ncapi "github.com/Azure/azure-container-networking/crd/multitenantnetworkcontainer/api/v1alpha1"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -20,15 +20,16 @@ import (
 
 var _ = Describe("multiTenantCrdReconciler", func() {
 	var kubeClient *mockclients.MockClient
-	var cnsClient *mockclients.MockAPIClient
+	var cnsRestService *mockclients.MockcnsRESTservice
 	var mockCtl *gomock.Controller
 	var reconciler *multiTenantCrdReconciler
-	var mockNodeName = "mockNodeName"
-	var namespacedName = types.NamespacedName{
+	const uuidValue = "uuid"
+	mockNodeName := "mockNodeName"
+	namespacedName := types.NamespacedName{
 		Namespace: "test",
 		Name:      "test",
 	}
-	var podInfo = cns.KubernetesPodInfo{
+	podInfo := cns.KubernetesPodInfo{
 		PodName:      namespacedName.Name,
 		PodNamespace: namespacedName.Namespace,
 	}
@@ -37,16 +38,15 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 		logger.InitLogger("multiTenantCrdReconciler", 0, 0, "")
 		mockCtl = gomock.NewController(GinkgoT())
 		kubeClient = mockclients.NewMockClient(mockCtl)
-		cnsClient = mockclients.NewMockAPIClient(mockCtl)
+		cnsRestService = mockclients.NewMockcnsRESTservice(mockCtl)
 		reconciler = &multiTenantCrdReconciler{
-			KubeClient: kubeClient,
-			NodeName:   mockNodeName,
-			CNSClient:  cnsClient,
+			KubeClient:     kubeClient,
+			NodeName:       mockNodeName,
+			CNSRestService: cnsRestService,
 		}
 	})
 
 	Context("lifecycle", func() {
-
 		It("Should succeed when the NC has already been deleted", func() {
 			expectedError := &apierrors.StatusError{
 				ErrStatus: metav1.Status{
@@ -104,7 +104,7 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 		})
 
 		It("Should succeed when the NC is in Initialized state and it has already been persisted in CNS", func() {
-			var uuid = "uuid"
+			uuid := uuidValue
 			var nc ncapi.MultiTenantNetworkContainer = ncapi.MultiTenantNetworkContainer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      namespacedName.Name,
@@ -126,10 +126,10 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 			Expect(err).To(BeNil())
 
 			kubeClient.EXPECT().Get(gomock.Any(), namespacedName, gomock.Any()).SetArg(2, nc)
-			cnsClient.EXPECT().GetNC(cns.GetNetworkContainerRequest{
+			cnsRestService.EXPECT().GetNetworkContainerInternal(cns.GetNetworkContainerRequest{
 				NetworkContainerid:  uuid,
 				OrchestratorContext: orchestratorContext,
-			}).Return(cns.GetNetworkContainerResponse{}, nil)
+			}).Return(cns.GetNetworkContainerResponse{}, cnstypes.Success)
 			_, err = reconciler.Reconcile(context.TODO(), reconcile.Request{
 				NamespacedName: namespacedName,
 			})
@@ -137,7 +137,7 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 		})
 
 		It("Should fail when the NC subnet isn't in correct format", func() {
-			var uuid = "uuid"
+			uuid := uuidValue
 			var nc ncapi.MultiTenantNetworkContainer = ncapi.MultiTenantNetworkContainer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      namespacedName.Name,
@@ -160,19 +160,19 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 			Expect(err).To(BeNil())
 
 			kubeClient.EXPECT().Get(gomock.Any(), namespacedName, gomock.Any()).SetArg(2, nc)
-			cnsClient.EXPECT().GetNC(cns.GetNetworkContainerRequest{
+			cnsRestService.EXPECT().GetNetworkContainerInternal(cns.GetNetworkContainerRequest{
 				NetworkContainerid:  uuid,
 				OrchestratorContext: orchestratorContext,
-			}).Return(cns.GetNetworkContainerResponse{}, fmt.Errorf("NotFound"))
+			}).Return(cns.GetNetworkContainerResponse{}, cnstypes.UnknownContainerID)
 			_, err = reconciler.Reconcile(context.TODO(), reconcile.Request{
 				NamespacedName: namespacedName,
 			})
 			Expect(err).NotTo(BeNil())
-			Expect(err.Error()).To(ContainSubstring("invalid CIDR address"))
+			Expect(err.Error()).To(ContainSubstring("UnknownContainerID"))
 		})
 
 		It("Should succeed when the NC subnet is in correct format", func() {
-			var uuid = "uuid"
+			uuid := uuidValue
 			var nc ncapi.MultiTenantNetworkContainer = ncapi.MultiTenantNetworkContainer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      namespacedName.Name,
@@ -196,7 +196,7 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 				PodNamespace: namespacedName.Namespace,
 			})
 			Expect(err).To(BeNil())
-			var networkContainerRequest = cns.CreateNetworkContainerRequest{
+			networkContainerRequest := cns.CreateNetworkContainerRequest{
 				NetworkContainerid:   nc.Spec.UUID,
 				NetworkContainerType: cns.Kubernetes,
 				OrchestratorContext:  orchestratorContext,
@@ -218,11 +218,11 @@ var _ = Describe("multiTenantCrdReconciler", func() {
 			statusWriter := mockclients.NewMockStatusWriter(mockCtl)
 			statusWriter.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
 			kubeClient.EXPECT().Status().Return(statusWriter)
-			cnsClient.EXPECT().GetNC(cns.GetNetworkContainerRequest{
+			cnsRestService.EXPECT().GetNetworkContainerInternal(cns.GetNetworkContainerRequest{
 				NetworkContainerid:  uuid,
 				OrchestratorContext: orchestratorContext,
-			}).Return(cns.GetNetworkContainerResponse{}, fmt.Errorf("NotFound"))
-			cnsClient.EXPECT().CreateOrUpdateNC(networkContainerRequest).Return(nil)
+			}).Return(cns.GetNetworkContainerResponse{}, cnstypes.Success)
+			cnsRestService.EXPECT().CreateOrUpdateNetworkContainerInternal(networkContainerRequest).Return(cnstypes.Success)
 			_, err = reconciler.Reconcile(context.TODO(), reconcile.Request{
 				NamespacedName: namespacedName,
 			})
