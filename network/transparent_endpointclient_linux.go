@@ -174,7 +174,7 @@ func (client *TransparentEndpointClient) DeleteEndpointRules(ep *endpoint) {
 
 		log.Printf("[net] Deleting route for the ip %v", ipNet.String())
 		routeInfo.Dst = ipNet
-		if err := deleteRoutes(client.hostVethName, []RouteInfo{routeInfo}); err != nil {
+		if err := deleteRoutes(client.netlink, client.hostVethName, []RouteInfo{routeInfo}); err != nil {
 			log.Printf("[net] Failed to delete route on VM for the ip %v: %v", ipNet.String(), err)
 		}
 	}
@@ -245,7 +245,7 @@ func (client *TransparentEndpointClient) ConfigureContainerInterfacesAndRoutes(e
 	// arp -s 169.254.1.1 e3:45:f4:ac:34:12 - add static arp entry for virtualgwip to hostveth interface mac
 	log.Printf("[net] Adding static arp for IP address %v and MAC %v in Container namespace",
 		virtualGwNet.String(), client.hostVethMac)
-	if err := netlink.AddOrRemoveStaticArp(netlink.ADD,
+	if err := client.netlink.AddOrRemoveStaticArp(netlink.ADD,
 		client.containerVethName,
 		virtualGwNet.IP,
 		client.hostVethMac,
@@ -280,7 +280,7 @@ func (client *TransparentEndpointClient) setupIPV6Routes(epInfo *EndpointInfo) e
 			Gw:  virtualGwIP,
 		}
 
-		if err := addRoutes(client.containerVethName, []RouteInfo{gwRoute, defaultRoute}); err != nil {
+		if err := addRoutes(client.netlink, client.containerVethName, []RouteInfo{gwRoute, defaultRoute}); err != nil {
 			return err
 		}
 
@@ -293,7 +293,7 @@ func (client *TransparentEndpointClient) setIPV6NeighEntry(epInfo *EndpointInfo)
 	if epInfo.IPV6Mode != "" {
 		log.Printf("[net] Add v6 neigh entry for default gw ip")
 		hostGwIP, _, _ := net.ParseCIDR(virtualv6GwString)
-		if err := netlink.AddOrRemoveStaticArp(netlink.ADD, client.containerVethName,
+		if err := client.netlink.AddOrRemoveStaticArp(netlink.ADD, client.containerVethName,
 			hostGwIP, client.hostVethMac, false); err != nil {
 			log.Printf("Failed setting neigh entry in container: %+v", err)
 			return fmt.Errorf("Failed setting neigh entry in container: %w", err)

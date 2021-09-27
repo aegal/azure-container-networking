@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azure/azure-container-networking/log"
 	"github.com/Azure/azure-container-networking/netlink"
+	"github.com/Azure/azure-container-networking/network/epcommon"
 	"github.com/Azure/azure-container-networking/ovsctl"
 )
 
@@ -182,8 +183,8 @@ func (nw *network) newEndpointImpl(_ apipaClient, nl netlink.NetlinkInterface, e
 	if epInfo.IPV6Mode != "" {
 		// Enable ipv6 setting in container
 		log.Printf("Enable ipv6 setting in container.")
-		if err := epcommon.UpdateIPV6Setting(0); err != nil {
-			return nil, err
+		if err = epcommon.UpdateIPV6Setting(0); err != nil {
+			return nil, fmt.Errorf("Enable ipv6 in container failed:%w", err)
 		}
 	}
 
@@ -315,9 +316,9 @@ func deleteRoutes(nl netlink.NetlinkInterface, interfaceName string, routes []Ro
 
 			ifIndex = interfaceIf.Index
 		}
-		family := netlink.GetIpAddressFamily(route.Gw)
+		family := netlink.GetIPAddressFamily(route.Gw)
 		if route.Gw == nil {
-			family = netlink.GetIpAddressFamily(route.Dst.IP)
+			family = netlink.GetIPAddressFamily(route.Dst.IP)
 		}
 
 		nlRoute := &netlink.Route{

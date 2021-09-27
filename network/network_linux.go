@@ -83,14 +83,10 @@ func (nm *networkManager) newNetworkImpl(nwInfo *NetworkInfo, extIf *externalInt
 			log.Printf("bridge handleCommonOptions failed with error %s", err.Error())
 		}
 	case opModeTransparent:
-		log.Printf("Transparent mode")		err := nm.handleCommonOptions(extIf.Name, nwInfo)
-		if err != nil {
-			log.Printf("transparent handleCommonOptions failed with error %s", err.Error())
-		}
+		log.Printf("Transparent mode")
 		if nwInfo.IPV6Mode != "" {
-			if err := nm.handleIpv6Transparent(extIf, nwInfo); err != nil {
-				log.Errorf("Error configuring ipv6 rules:%+v", err)
-				return nil, err
+			if err := epcommon.EnableIPV6Forwarding(); err != nil {
+				return nil, fmt.Errorf("Ipv6 forwarding failed: %w", err)
 			}
 		}
 	default:
@@ -359,40 +355,6 @@ func applyDnsConfig(extIf *externalInterface, ifName string) error {
 	}
 
 	return err
-}
-
-func (nm *networkManager) handleIpv6Transparent(extIf *externalInterface, nwInfo *NetworkInfo) error {
-	log.Printf("configure ipv6 rules")
-
-	if err := epcommon.EnableIPV6Forwarding(); err != nil {
-		return fmt.Errorf("Ipv6 forwarding failed: %w", err)
-	}
-
-	hostIf, err := net.InterfaceByName(extIf.Name)
-	if err != nil {
-		return fmt.Errorf("%w", err)
-	}
-
-	addrs, err := hostIf.Addrs()
-	if err != nil {
-		return fmt.Errorf("%w", err)
-	}
-
-	for _, addr := range addrs {
-		ipAddr, ipNet, err := net.ParseCIDR(addr.String())
-		ipNet.IP = ipAddr
-		if err != nil {
-			continue
-		}
-
-		if !ipAddr.IsGlobalUnicast() {
-			continue
-		}
-
-		extIf.IPAddresses = append(extIf.IPAddresses, ipNet)
-	}
-
-	return addIpv6SnatRule(extIf, nwInfo)
 }
 
 // ConnectExternalInterface connects the given host interface to a bridge.
