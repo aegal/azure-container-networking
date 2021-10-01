@@ -15,36 +15,29 @@ const (
 )
 
 func TestCreateIPSet(t *testing.T) {
-	iMgr := NewIPSetManager()
+	iMgr := NewIPSetManager("azure")
 
-	err := iMgr.CreateIPSet(testSetName, NameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
+	iMgr.CreateIPSet(testSetName, NameSpace)
+
+	// TODO add cache check
 }
 
 func TestAddToSet(t *testing.T) {
-	iMgr := NewIPSetManager()
+	iMgr := NewIPSetManager("azure")
 
-	err := iMgr.CreateIPSet(testSetName, NameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
+	iMgr.CreateIPSet(testSetName, NameSpace)
 
-	err = iMgr.AddToSet([]string{testSetName}, testPodIP, testPodKey)
+	err := iMgr.AddToSet([]string{testSetName}, testPodIP, testPodKey)
 	if err != nil {
 		t.Errorf("AddToSet() returned error %s", err.Error())
 	}
 }
 
 func TestRemoveFromSet(t *testing.T) {
-	iMgr := NewIPSetManager()
+	iMgr := NewIPSetManager("azure")
 
-	err := iMgr.CreateIPSet(testSetName, NameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
-	err = iMgr.AddToSet([]string{testSetName}, testPodIP, testPodKey)
+	iMgr.CreateIPSet(testSetName, NameSpace)
+	err := iMgr.AddToSet([]string{testSetName}, testPodIP, testPodKey)
 	if err != nil {
 		t.Errorf("RemoveFromSet() returned error %s", err.Error())
 	}
@@ -55,7 +48,7 @@ func TestRemoveFromSet(t *testing.T) {
 }
 
 func TestRemoveFromSetMissing(t *testing.T) {
-	iMgr := NewIPSetManager()
+	iMgr := NewIPSetManager("azure")
 	err := iMgr.RemoveFromSet([]string{testSetName}, testPodIP, testPodKey)
 	if err == nil {
 		t.Errorf("RemoveFromSet() did not return error")
@@ -63,7 +56,7 @@ func TestRemoveFromSetMissing(t *testing.T) {
 }
 
 func TestAddToListMissing(t *testing.T) {
-	iMgr := NewIPSetManager()
+	iMgr := NewIPSetManager("azure")
 	err := iMgr.AddToList(testPodKey, []string{"newtest"})
 	if err == nil {
 		t.Errorf("AddToList() did not return error")
@@ -71,36 +64,22 @@ func TestAddToListMissing(t *testing.T) {
 }
 
 func TestAddToList(t *testing.T) {
-	iMgr := NewIPSetManager()
-	err := iMgr.CreateIPSet(testSetName, NameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
+	iMgr := NewIPSetManager("azure")
+	iMgr.CreateIPSet(testSetName, NameSpace)
+	iMgr.CreateIPSet(testListName, KeyLabelOfNameSpace)
 
-	err = iMgr.CreateIPSet(testListName, KeyLabelOfNameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
-
-	err = iMgr.AddToList(testListName, []string{testSetName})
+	err := iMgr.AddToList(testListName, []string{testSetName})
 	if err != nil {
 		t.Errorf("AddToList() returned error %s", err.Error())
 	}
 }
 
 func TestRemoveFromList(t *testing.T) {
-	iMgr := NewIPSetManager()
-	err := iMgr.CreateIPSet(testSetName, NameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
+	iMgr := NewIPSetManager("azure")
+	iMgr.CreateIPSet(testSetName, NameSpace)
+	iMgr.CreateIPSet(testListName, KeyLabelOfNameSpace)
 
-	err = iMgr.CreateIPSet(testListName, KeyLabelOfNameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
-
-	err = iMgr.AddToList(testListName, []string{testSetName})
+	err := iMgr.AddToList(testListName, []string{testSetName})
 	if err != nil {
 		t.Errorf("AddToList() returned error %s", err.Error())
 	}
@@ -112,30 +91,22 @@ func TestRemoveFromList(t *testing.T) {
 }
 
 func TestRemoveFromListMissing(t *testing.T) {
-	iMgr := NewIPSetManager()
+	iMgr := NewIPSetManager("azure")
 
-	err := iMgr.CreateIPSet(testListName, KeyLabelOfNameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
+	iMgr.CreateIPSet(testListName, KeyLabelOfNameSpace)
 
-	err = iMgr.RemoveFromList(testListName, []string{testSetName})
+	err := iMgr.RemoveFromList(testListName, []string{testSetName})
 	if err == nil {
 		t.Errorf("RemoveFromList() did not return error")
 	}
 }
 
 func TestDeleteIPSet(t *testing.T) {
-	iMgr := NewIPSetManager()
-	err := iMgr.CreateIPSet(testSetName, NameSpace)
-	if err != nil {
-		t.Errorf("CreateIPSet() returned error %s", err.Error())
-	}
+	iMgr := NewIPSetManager("azure")
+	iMgr.CreateIPSet(testSetName, NameSpace)
 
-	err = iMgr.DeleteIPSet(testSetName)
-	if err != nil {
-		t.Errorf("DeleteIPSet() returned error %s", err.Error())
-	}
+	iMgr.DeleteIPSet(testSetName)
+	// TODO add cache check
 }
 
 func TestMain(m *testing.M) {

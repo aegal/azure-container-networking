@@ -16,12 +16,14 @@ func NewPolicyManager() *PolicyManager {
 	}
 }
 
-func (pMgr *PolicyManager) GetPolicy(name string) (*NPMNetworkPolicy, error) {
-	if policy, ok := pMgr.policyMap.cache[name]; ok {
-		return policy, nil
-	}
+func (pMgr *PolicyManager) PolicyExists(name string) bool {
+	_, ok := pMgr.policyMap.cache[name]
+	return ok
+}
 
-	return nil, nil
+func (pMgr *PolicyManager) GetPolicy(name string) (*NPMNetworkPolicy, bool) {
+	policy, ok := pMgr.policyMap.cache[name]
+	return policy, ok
 }
 
 func (pMgr *PolicyManager) AddPolicy(policy *NPMNetworkPolicy) error {

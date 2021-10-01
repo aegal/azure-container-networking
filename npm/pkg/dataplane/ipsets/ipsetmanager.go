@@ -10,8 +10,16 @@ import (
 	npmerrors "github.com/Azure/azure-container-networking/npm/util/errors"
 )
 
+type IPSetMode string
+
+const (
+	ApplyAllIPSets IPSetMode = "all"
+	ApplyOnNeed    IPSetMode = "on-need"
+)
+
 type IPSetManager struct {
-	setMap map[string]*IPSet
+	iMgrCfg *ipSetManagerCfg
+	setMap  map[string]*IPSet
 	// Map with Key as IPSet name to to emulate set
 	// and value as struct{} for minimal memory consumption.
 	toAddOrUpdateCache map[string]struct{}
@@ -20,44 +28,55 @@ type IPSetManager struct {
 	sync.Mutex
 }
 
-func NewIPSetManager() *IPSetManager {
+type ipSetManagerCfg struct {
+	ipSetMode   IPSetMode
+	networkName string
+}
+
+func NewIPSetManager(networkName string) *IPSetManager {
 	return &IPSetManager{
+		iMgrCfg: &ipSetManagerCfg{
+			ipSetMode:   ApplyOnNeed,
+			networkName: networkName,
+		},
 		setMap:             make(map[string]*IPSet),
 		toAddOrUpdateCache: make(map[string]struct{}),
 		toDeleteCache:      make(map[string]struct{}),
 	}
 }
 
-func (iMgr *IPSetManager) CreateIPSet(setName string, setType SetType) error {
+func (iMgr *IPSetManager) CreateIPSet(setName string, setType SetType) {
 	iMgr.Lock()
 	defer iMgr.Unlock()
 	if iMgr.exists(setName) {
-		return npmerrors.Errorf(npmerrors.CreateIPSet, false, fmt.Sprintf("ipset %s already exists", setName))
+		return
 	}
 	iMgr.setMap[setName] = NewIPSet(setName, setType)
 	metrics.IncNumIPSets()
-	return nil
+	return
 }
 
-func (iMgr *IPSetManager) DeleteIPSet(name string) error {
+func (iMgr *IPSetManager) DeleteIPSet(name string) {
 	iMgr.Lock()
 	defer iMgr.Unlock()
 	if !iMgr.exists(name) {
-		return npmerrors.Errorf(npmerrors.DestroyIPSet, false, fmt.Sprintf("ipset %s does not exist", name))
+		return
 	}
 
 	set := iMgr.setMap[name]
 	if !set.canBeDeleted() {
-		return npmerrors.Errorf(npmerrors.DeleteIPSet, false, fmt.Sprintf("ipset %s cannot be deleted", name))
+		return
 	}
 
 	// the set will not be in the kernel since there are no references, so there's no need to update the dirty cache
 	delete(iMgr.setMap, name)
 	metrics.DecNumIPSets()
-	return nil
+	return
 }
 
 func (iMgr *IPSetManager) AddReference(setName, referenceName string, referenceType ReferenceType) error {
+	iMgr.Lock()
+	defer iMgr.Unlock()
 	if !iMgr.exists(setName) {
 		npmErrorString := npmerrors.AddSelectorReference
 		if referenceType == NetPolType {
@@ -81,6 +100,8 @@ func (iMgr *IPSetManager) AddReference(setName, referenceName string, referenceT
 }
 
 func (iMgr *IPSetManager) DeleteReference(setName, referenceName string, referenceType ReferenceType) error {
+	iMgr.Lock()
+	defer iMgr.Unlock()
 	if !iMgr.exists(setName) {
 		npmErrorString := npmerrors.DeleteSelectorReference
 		if referenceType == NetPolType {
@@ -198,13 +219,18 @@ func (iMgr *IPSetManager) ApplyIPSets(networkID string) error {
 	defer iMgr.Unlock()
 
 	// Call the appropriate apply ipsets
-	err := iMgr.applyIPSets(networkID)
+	err := iMgr.applyIPSets()
 	if err != nil {
 		return err
 	}
 
 	iMgr.clearDirtyCache()
 	// TODO could also set the number of ipsets in NPM (not necessarily in kernel) here using len(iMgr.setMap)
+	return nil
+}
+
+func (iMgr *IPSetManager) GetIPsFromSelectorIPSets() []string {
+
 	return nil
 }
 

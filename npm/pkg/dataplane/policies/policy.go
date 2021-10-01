@@ -13,10 +13,10 @@ type NPMNetworkPolicy struct {
 	// and not from pod selector IPSets
 	RuleIPSets []*ipsets.IPSet
 	ACLs       []*ACLPolicy
-	// Making this a podKey instead should be
-	// use NPMPod obj
-	Pods  []string
-	RawNP *networkingv1.NetworkPolicy
+	// podIP is key and endpoint ID as value
+	// Will be populated by dataplane and policy manager
+	PodEndpoints map[string]string
+	RawNP        *networkingv1.NetworkPolicy
 }
 
 // ACLPolicy equivalent to a single iptable rule in linux

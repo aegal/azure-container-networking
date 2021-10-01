@@ -16,8 +16,8 @@ const (
 	SetPolicyTypeNestedIPSet hcn.SetPolicyType = "NESTEDIPSET"
 )
 
-func (iMgr *IPSetManager) applyIPSets(networkID string) error {
-	network, err := hcn.GetNetworkByID(networkID)
+func (iMgr *IPSetManager) applyIPSets() error {
+	network, err := iMgr.getHCnNetwork()
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (iMgr *IPSetManager) applyIPSets(networkID string) error {
 
 func (iMgr *IPSetManager) calculateNewSetPolicies(existingSets []string) (map[string]*hcn.SetPolicySetting, error) {
 	// some of this below logic can be abstracted a step above
-	dirtySets := iMgr.dirtyCaches
+	dirtySets := iMgr.toAddOrUpdateCache
 
 	for _, setName := range existingSets {
 		dirtySets[setName] = struct{}{}
@@ -79,9 +79,6 @@ func (iMgr *IPSetManager) calculateNewSetPolicies(existingSets []string) (map[st
 		set, exists := iMgr.setMap[setName] // check if the Set exists
 		if !exists {
 			return nil, errors.Errorf(errors.AppendIPSet, false, fmt.Sprintf("member ipset %s does not exist", setName))
-		}
-		if !set.UsedByNetPol() {
-			continue
 		}
 
 		setPol, err := convertToSetPolicy(set)
@@ -105,6 +102,17 @@ func (iMgr *IPSetManager) calculateNewSetPolicies(existingSets []string) (map[st
 	}
 
 	return setsToUpdate, nil
+}
+
+func (iMgr *IPSetManager) getHCnNetwork() (*hcn.HostComputeNetwork, error) {
+	if iMgr.iMgrCfg.networkName == "" {
+		iMgr.iMgrCfg.networkName = "azure"
+	}
+	network, err := hcn.GetNetworkByName("azure")
+	if err != nil {
+		return nil, err
+	}
+	return network, nil
 }
 
 func isValidIPSet(set *IPSet) error {
@@ -157,7 +165,7 @@ func convertToSetPolicy(set *IPSet) (*hcn.SetPolicySetting, error) {
 func getAllSetPolicyNames(networkPolicies []hcn.NetworkPolicy) ([]string, error) {
 	setPols := []string{}
 	for _, netpol := range networkPolicies {
-		if netpol.Type == "SetPolicy" {
+		if netpol.Type == hcn.SetPolicy {
 			var set hcn.SetPolicySetting
 			err := json.Unmarshal(netpol.Settings, &set)
 			if err != nil {

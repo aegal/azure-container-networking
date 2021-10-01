@@ -9,14 +9,11 @@ import (
 
 func TestNewDataPlane(t *testing.T) {
 	metrics.InitializeAll()
-	dp := NewDataPlane()
+	dp := NewDataPlane("testnode")
 
 	if dp == nil {
 		t.Error("NewDataPlane() returned nil")
 	}
 
-	err := dp.CreateIPSet("test", ipsets.NameSpace)
-	if err != nil {
-		t.Error("CreateIPSet() returned error")
-	}
+	dp.CreateIPSet("test", ipsets.NameSpace)
 }
