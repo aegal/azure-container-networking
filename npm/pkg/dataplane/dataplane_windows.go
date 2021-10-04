@@ -1,7 +1,6 @@
 package dataplane
 
 import (
-	"github.com/Azure/azure-container-networking/npm"
 	"github.com/Azure/azure-container-networking/npm/pkg/dataplane/policies"
 	"github.com/Microsoft/hcsshim/hcn"
 	"k8s.io/klog"
@@ -24,10 +23,14 @@ func (dp *DataPlane) initializeDataPlane() error {
 	return nil
 }
 
+func (dp *DataPlane) shouldUpdatePod() bool {
+	return true
+}
+
 // updatePod has two responsibilities in windows
 // 1. Will call into dataplane and updates endpoint references of this pod.
 // 2. Will check for existing applicable network policies and applies it on endpoint
-func (dp *DataPlane) updatePod(pod *npm.NpmPod) error {
+func (dp *DataPlane) updatePod(pod *UpdateNPMPod) error {
 	klog.Infof("[DataPlane] updatePod called for %s/%s", pod.Namespace, pod.Name)
 	// Check if pod is part of this node
 	if pod.NodeName != dp.nodeName {
@@ -37,7 +40,9 @@ func (dp *DataPlane) updatePod(pod *npm.NpmPod) error {
 
 	podKey := getNPMPodKey(pod.Namespace, pod.Name)
 	// Check if pod is already present in cache
-	if _, ok := dp.endpointCache[podKey]; !ok {
+	endpoint, ok := dp.endpointCache[podKey]
+	// TODO will this throw nil pointer if not ok
+	if (!ok) || (endpoint.IP != pod.PodIP) {
 		// Get endpoint for this pod
 		endpoint, err := dp.getEndpointByIP(pod.PodIP)
 		if err != nil {
@@ -50,7 +55,7 @@ func (dp *DataPlane) updatePod(pod *npm.NpmPod) error {
 }
 
 func (dp *DataPlane) getEndpointsToApplyPolicy(policy *policies.NPMNetworkPolicy) (map[string]string, error) {
-
+	// TODO need to calculate all existing selector
 	return nil, nil
 }
 
@@ -107,6 +112,7 @@ func (dp *DataPlane) getEndpointByIP(podIP string) (*NPMEndpoint, error) {
 				ep := &NPMEndpoint{
 					Name:            endpoint.Name,
 					ID:              endpoint.Id,
+					IP:              endpoint.IpConfigurations[0].IpAddress,
 					NetPolReference: make(map[string]struct{}),
 				}
 				return ep, nil

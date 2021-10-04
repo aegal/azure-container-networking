@@ -17,8 +17,12 @@ func (dp *DataPlane) getEndpointsToApplyPolicy(policy *policies.NPMNetworkPolicy
 	return nil, nil
 }
 
+func (dp *DataPlane) shouldUpdatePod() bool {
+	return false
+}
+
 // updatePod is no-op in Linux
-func (dp *DataPlane) updatePod(pod *npm.NpmPod) error {
+func (dp *DataPlane) updatePod(pod *UpdateNPMPod) error {
 	return nil
 }
 

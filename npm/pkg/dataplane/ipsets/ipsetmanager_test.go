@@ -2,6 +2,7 @@ package ipsets
 
 import (
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/Azure/azure-container-networking/npm/metrics"
@@ -107,6 +108,48 @@ func TestDeleteIPSet(t *testing.T) {
 
 	iMgr.DeleteIPSet(testSetName)
 	// TODO add cache check
+}
+
+func TestGetIPsFromSelectorIPSets(t *testing.T) {
+	iMgr := NewIPSetManager("azure")
+	iMgr.CreateIPSet("setNs1", NameSpace)
+	iMgr.CreateIPSet("setpod1", KeyLabelOfPod)
+	iMgr.CreateIPSet("setpod2", KeyLabelOfPod)
+	iMgr.CreateIPSet("setpod3", KeyValueLabelOfPod)
+
+	err := iMgr.AddToSet([]string{"setNs1", "setpod1", "setpod2", "setpod3"}, "10.0.0.1", "test")
+	if err != nil {
+		t.Errorf("AddToSet() returned error %s", err.Error())
+	}
+
+	err = iMgr.AddToSet([]string{"setNs1", "setpod1", "setpod2", "setpod3"}, "10.0.0.2", "test1")
+	if err != nil {
+		t.Errorf("AddToSet() returned error %s", err.Error())
+	}
+
+	err = iMgr.AddToSet([]string{"setNs1", "setpod2", "setpod3"}, "10.0.0.3", "test3")
+	if err != nil {
+		t.Errorf("AddToSet() returned error %s", err.Error())
+	}
+
+	ips, err := iMgr.GetIPsFromSelectorIPSets([]string{"setNs1", "setpod1", "setpod2", "setpod3"})
+	if err != nil {
+		t.Errorf("GetIPsFromSelectorIPSets() returned error %s", err.Error())
+	}
+
+	if len(ips) != 2 {
+		t.Errorf("GetIPsFromSelectorIPSets() returned wrong number of IPs %d", len(ips))
+		t.Error(ips)
+	}
+
+	expectedintersection := map[string]struct{}{
+		"10.0.0.1": struct{}{},
+		"10.0.0.2": struct{}{},
+	}
+
+	if reflect.DeepEqual(ips, expectedintersection) == false {
+		t.Errorf("GetIPsFromSelectorIPSets() returned wrong IPs")
+	}
 }
 
 func TestMain(m *testing.M) {

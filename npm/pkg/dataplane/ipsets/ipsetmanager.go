@@ -86,6 +86,9 @@ func (iMgr *IPSetManager) AddReference(setName, referenceName string, referenceT
 	}
 
 	set := iMgr.setMap[setName]
+	if referenceType == SelectorType && !set.canSetBeSelectorIPSet() {
+		return npmerrors.Errorf(npmerrors.AddSelectorReference, false, fmt.Sprintf("ipset %s is not a selector ipset it is of type %s", setName, set.Type.String()))
+	}
 	wasInKernel := set.shouldBeInKernel()
 	set.addReference(referenceName, referenceType)
 	if !wasInKernel {
@@ -229,9 +232,30 @@ func (iMgr *IPSetManager) ApplyIPSets(networkID string) error {
 	return nil
 }
 
-func (iMgr *IPSetManager) GetIPsFromSelectorIPSets() []string {
+func (iMgr *IPSetManager) GetIPsFromSelectorIPSets(setList []string) (map[string]struct{}, error) {
+	if len(setList) == 0 {
+		return nil, nil
+	}
+	iMgr.Lock()
+	defer iMgr.Unlock()
 
-	return nil
+	setintersections := make(map[string]struct{})
+	intialSetIPs := iMgr.setMap[setList[0]].IPPodKey
+	for k := range intialSetIPs {
+		setintersections[k] = struct{}{}
+	}
+	var err error
+	for _, setName := range setList {
+		if !iMgr.exists(setName) {
+			return nil, fmt.Errorf("[ipset manager] selector ipset %s does not exist.", setName)
+		}
+		set := iMgr.setMap[setName]
+		setintersections, err = set.getSetIntersection(setintersections)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return setintersections, err
 }
 
 func (iMgr *IPSetManager) exists(name string) bool {

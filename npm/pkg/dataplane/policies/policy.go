@@ -8,10 +8,10 @@ import (
 type NPMNetworkPolicy struct {
 	Name string
 	// PodSelectorIPSets holds all the IPSets generated from Pod Selector
-	PodSelectorIPSets []*ipsets.IPSet
+	PodSelectorIPSets map[string]*ipsets.IPSet
 	// RuleIPSets holds all IPSets generated from policy's rules
 	// and not from pod selector IPSets
-	RuleIPSets []*ipsets.IPSet
+	RuleIPSets map[string]*ipsets.IPSet
 	ACLs       []*ACLPolicy
 	// podIP is key and endpoint ID as value
 	// Will be populated by dataplane and policy manager
