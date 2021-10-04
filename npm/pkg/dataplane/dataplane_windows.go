@@ -1,6 +1,8 @@
 package dataplane
 
 import (
+	"fmt"
+
 	"github.com/Azure/azure-container-networking/npm/pkg/dataplane/policies"
 	"github.com/Microsoft/hcsshim/hcn"
 	"k8s.io/klog"
@@ -43,6 +45,8 @@ func (dp *DataPlane) updatePod(pod *UpdateNPMPod) error {
 	endpoint, ok := dp.endpointCache[podKey]
 	// TODO will this throw nil pointer if not ok
 	if (!ok) || (endpoint.IP != pod.PodIP) {
+		// If the existing endpoint ID has changed, it means that the Pod has been recreated
+		// this results in old endpoint to be deleted, so we can safely ignore cleaning up policies
 		// Get endpoint for this pod
 		endpoint, err := dp.getEndpointByIP(pod.PodIP)
 		if err != nil {
@@ -51,7 +55,85 @@ func (dp *DataPlane) updatePod(pod *UpdateNPMPod) error {
 		dp.endpointCache[podKey] = endpoint
 	}
 	// TODO now check if any of the existing network policies needs to be applied
+	// Check if the removed IPSets have any network policy references ?
+	toRemovePolicies := make(map[string]struct{})
+	for _, setName := range pod.IPSetsToRemove {
+		netpolReference, err := dp.ipsetMgr.GetNetworkPolicyReferencesBySet(setName)
+		if err != nil {
+			return err
+		}
+
+		for policyName := range netpolReference {
+			toRemovePolicies[policyName] = struct{}{}
+		}
+	}
+
+	// Now check if any of these network policies are applied on this endpoint.
+	// If yes then proceed to delete the network policy
+	for policyName := range toRemovePolicies {
+		if _, ok := endpoint.NetPolReference[policyName]; ok {
+			// Delete the network policy
+			err := dp.policyMgr.RemovePolicy(policyName, []string{endpoint.ID})
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	toAddPolicies := make(map[string]struct{})
+	for _, setName := range pod.IPSetsToAdd {
+		netpolReference, err := dp.ipsetMgr.GetNetworkPolicyReferencesBySet(setName)
+		if err != nil {
+			return err
+		}
+
+		for netpol := range netpolReference {
+			toAddPolicies[netpol] = struct{}{}
+		}
+	}
+
+	// Now check if any of these network policies are applied on this endpoint.
+	// If not then proceed to apply the network policy
+	for policyName := range toAddPolicies {
+		if _, ok := endpoint.NetPolReference[policyName]; ok {
+			continue
+		}
+
+		netpolSelectorIPs, err := dp.getSelectorIPsByPolicyName(policyName)
+		if err != nil {
+			return err
+		}
+
+		if _, ok := netpolSelectorIPs[pod.PodIP]; !ok {
+			continue
+		}
+
+		// Apply the network policy
+		policy, ok := dp.policyMgr.GetPolicy(policyName)
+		if !ok {
+			return fmt.Errorf("policy with name %s does not exist", policyName)
+		}
+		err = dp.policyMgr.AddPolicy(policy, []string{endpoint.ID})
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func (dp *DataPlane) getSelectorIPsByPolicyName(policyName string) (map[string]struct{}, error) {
+	policy, ok := dp.policyMgr.GetPolicy(policyName)
+	if !ok {
+		return nil, fmt.Errorf("policy with name %s does not exist", policyName)
+	}
+
+	var selectorIpSets map[string]struct{}
+	for ipsetName := range policy.PodSelectorIPSets {
+		selectorIpSets[ipsetName] = struct{}{}
+	}
+
+	return dp.ipsetMgr.GetIPsFromSelectorIPSets(selectorIpSets)
 }
 
 func (dp *DataPlane) getEndpointsToApplyPolicy(policy *policies.NPMNetworkPolicy) (map[string]string, error) {

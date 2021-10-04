@@ -162,6 +162,11 @@ func (dp *DataPlane) AddPolicy(policy *policies.NPMNetworkPolicy) error {
 		klog.Infof("[DataPlane] error while adding Rule IPSet references: %s", err.Error())
 		return fmt.Errorf("[DataPlane] error while adding Rule IPSet references: %w", err)
 	}
+
+	err = dp.ApplyDataPlane()
+	if err != nil {
+		return fmt.Errorf("[DataPlane] error while applying dataplane: %w", err)
+	}
 	// TODO calculate endpoints to apply policy on
 	endpointList, err := dp.getEndpointsToApplyPolicy(policy)
 	if err != nil {
@@ -203,6 +208,11 @@ func (dp *DataPlane) RemovePolicy(policyName string) error {
 		return err
 	}
 
+	err = dp.ApplyDataPlane()
+	if err != nil {
+		return fmt.Errorf("[DataPlane] error while applying dataplane: %w", err)
+	}
+
 	return nil
 }
 
@@ -215,6 +225,9 @@ func (dp *DataPlane) UpdatePolicy(policy *policies.NPMNetworkPolicy) error {
 		klog.Infof("[DataPlane] Policy %s is not found. Might been deleted already", policy.Name)
 		return dp.AddPolicy(policy)
 	}
+
+	// TODO it would be ideal to calculate a diff of policies
+	// and remove/apply only the delta of IPSets and policies
 
 	// Taking the easy route here, delete existing policy
 	err := dp.policyMgr.RemovePolicy(policy.Name, nil)

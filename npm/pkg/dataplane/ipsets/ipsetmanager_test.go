@@ -132,7 +132,13 @@ func TestGetIPsFromSelectorIPSets(t *testing.T) {
 		t.Errorf("AddToSet() returned error %s", err.Error())
 	}
 
-	ips, err := iMgr.GetIPsFromSelectorIPSets([]string{"setNs1", "setpod1", "setpod2", "setpod3"})
+	ipsetList := map[string]struct{}{
+		"setNs1":  {},
+		"setpod1": {},
+		"setpod2": {},
+		"setpod3": {},
+	}
+	ips, err := iMgr.GetIPsFromSelectorIPSets(ipsetList)
 	if err != nil {
 		t.Errorf("GetIPsFromSelectorIPSets() returned error %s", err.Error())
 	}
@@ -143,8 +149,8 @@ func TestGetIPsFromSelectorIPSets(t *testing.T) {
 	}
 
 	expectedintersection := map[string]struct{}{
-		"10.0.0.1": struct{}{},
-		"10.0.0.2": struct{}{},
+		"10.0.0.1": {},
+		"10.0.0.2": {},
 	}
 
 	if reflect.DeepEqual(ips, expectedintersection) == false {
